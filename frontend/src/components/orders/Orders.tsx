@@ -78,7 +78,7 @@ const Orders: React.FC = () => {
 
   const generateInvoice = async (orderId: number) => {
     try {
-      const response = await fetch(`https://web-production-84a3.up.railway.app/api/admin/orders/${orderId}/generate-invoice`, {
+      const response = await fetch(`/api/admin/orders/${orderId}/generate-invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

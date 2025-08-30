@@ -63,7 +63,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch('https://web-production-84a3.up.railway.app/api/products', {
+      const response = await fetch('/api/products', {
         credentials: 'include'
       });
       if (response.ok) {
@@ -80,7 +80,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   const loadOrders = async () => {
     try {
       setOrdersLoading(true);
-      const response = await fetch('https://web-production-84a3.up.railway.app/api/customers/orders', {
+      const response = await fetch('/api/customers/orders', {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
@@ -105,7 +105,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   const loadInvoices = async () => {
     try {
       setInvoicesLoading(true);
-      const response = await fetch('https://web-production-84a3.up.railway.app/api/customers/invoices', {
+      const response = await fetch('/api/customers/invoices', {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
@@ -181,7 +181,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
         total_amount: getTotalAmount()
       };
 
-                           const response = await fetch('https://web-production-84a3.up.railway.app/api/customers/orders', {
+                           const response = await fetch('/api/customers/orders', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

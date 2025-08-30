@@ -44,13 +44,13 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       let endpoint = '';
       switch (userType) {
         case 'admin':
-          endpoint = 'https://web-production-84a3.up.railway.app/api/auth/login';
+          endpoint = '/api/auth/login';
           break;
         case 'customer':
-          endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/login';
+          endpoint = '/api/customer-auth/login';
           break;
         case 'super_admin':
-          endpoint = 'https://web-production-84a3.up.railway.app/api/super-admin/login';
+          endpoint = '/api/super-admin/login';
           break;
       }
 

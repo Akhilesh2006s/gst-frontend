@@ -36,7 +36,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const fetchDashboardData = async () => {
     try {
       // Fetch products
-      const productsResponse = await fetch('https://web-production-84a3.up.railway.app/api/products/', {
+      const productsResponse = await fetch('/api/products/', {
         credentials: 'include'
       });
       if (productsResponse.ok) {
@@ -45,7 +45,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       }
 
       // Fetch invoices
-      const invoicesResponse = await fetch('https://web-production-84a3.up.railway.app/api/invoices', {
+      const invoicesResponse = await fetch('/api/invoices', {
         credentials: 'include'
       });
       if (invoicesResponse.ok) {
