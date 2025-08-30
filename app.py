@@ -203,6 +203,16 @@ def create_app(config_name='development'):
             return jsonify({'error': str(e)}), 500
     
     # Serve React app (only for production)
+    @app.route('/')
+    def health_check():
+        """Simple health check endpoint"""
+        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+
+    @app.route('/health')
+    def health():
+        """Health check endpoint for Railway"""
+        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve(path):
