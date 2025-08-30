@@ -1,6 +1,7 @@
+from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-from models import db
 
+db = SQLAlchemy()
 migrate = Migrate()
 
 def init_app(app):
@@ -11,9 +12,6 @@ def init_app(app):
     with app.app_context():
         # Create all tables
         db.create_all()
-        
-        # Import models to ensure they are registered
-        from models import User, Customer, Product, Invoice, InvoiceItem, StockMovement, GSTReport
         
     return db
 
