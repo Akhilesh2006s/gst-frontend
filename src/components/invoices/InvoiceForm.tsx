@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 interface Product {
   id: number;
@@ -283,7 +283,7 @@ const InvoiceForm: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              ${formData.items.map((item, index) => `
+              ${formData.items.map((item) => `
                 <tr>
                   <td style="border: 1px solid #ddd; padding: 12px; font-size: 14px;">
                     ${item.product ? item.product.name : 'Product'}

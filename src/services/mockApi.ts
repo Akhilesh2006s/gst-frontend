@@ -15,7 +15,7 @@ class MockApiService {
   }
 
   // Authentication methods
-  async login(credentials: LoginForm): Promise<{ user: User; token: string }> {
+  async login(_credentials: LoginForm): Promise<{ user: User; token: string }> {
     await this.delay();
     return {
       user: {

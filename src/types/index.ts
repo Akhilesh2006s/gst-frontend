@@ -38,6 +38,9 @@ export interface Product {
   created_at: string;
   updated_at: string;
   is_active: boolean;
+  sku?: string;
+  unit?: string;
+  min_stock_level?: number;
 }
 
 export interface InvoiceItem {
@@ -67,6 +70,8 @@ export interface Invoice {
   updated_at: string;
   items?: InvoiceItem[];
   custom_columns?: { [key: string]: string };
+  customer?: Customer;
+  status?: string;
 }
 
 export interface StockMovement {
