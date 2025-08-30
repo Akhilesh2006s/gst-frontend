@@ -242,7 +242,7 @@ const Dashboard: React.FC = () => {
                           <td>{product.sku}</td>
                           <td>₹{product.price.toLocaleString()}</td>
                           <td>
-                            <span className={`badge bg-${product.stock_quantity > product.min_stock_level ? 'success' : 'danger'}`}>
+                            <span className={`badge bg-${product.stock_quantity > (product.min_stock_level || 0) ? 'success' : 'danger'}`}>
                               {product.stock_quantity} {product.unit}
                             </span>
                           </td>

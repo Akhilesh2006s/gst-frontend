@@ -61,12 +61,12 @@ const Products: React.FC = () => {
   
   console.log('Filtered products:', filteredProducts);
 
-  const _handleInventoryAction = (product: Product, action: 'add' | 'remove') => {
-    setSelectedProduct(product);
-    setInventoryAction(action);
-    setInventoryQuantity(1);
-    setShowInventoryModal(true);
-  };
+  // const _handleInventoryAction = (product: Product, action: 'add' | 'remove') => {
+  //   setSelectedProduct(product);
+  //   setInventoryAction(action);
+  //   setInventoryQuantity(1);
+  //   setShowInventoryModal(true);
+  // };
 
   const handleInventorySubmit = async () => {
     if (!selectedProduct) return;
