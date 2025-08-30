@@ -30,7 +30,20 @@ def create_app(config_name='development'):
     app.config.from_object(config[config_name])
     
     # Enable CORS for API routes with credentials support
-    CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000"], "supports_credentials": True}})
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:3000",
+                "http://localhost:5173", 
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5173",
+                "https://web-production-84a3.up.railway.app"
+            ], 
+            "supports_credentials": True,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
     
     # Initialize extensions
     db.init_app(app)

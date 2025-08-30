@@ -78,29 +78,25 @@ const Orders: React.FC = () => {
 
   const generateInvoice = async (orderId: number) => {
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/generate-invoice`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/admin/orders/${orderId}/generate-invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
+        credentials: 'include'
       });
 
       if (response.ok) {
         const data = await response.json();
-        if (data.success) {
-          alert('Invoice generated successfully!');
-          // Optionally navigate to the invoice
-          navigate(`/invoices/${data.invoice.id}`);
-        } else {
-          alert(data.error || 'Failed to generate invoice');
-        }
+        alert('Invoice generated successfully!');
+        loadOrders(); // Reload orders to show updated status
       } else {
-        alert('Failed to generate invoice');
+        const errorData = await response.json();
+        alert(`Failed to generate invoice: ${errorData.error || 'Unknown error'}`);
       }
-    } catch (error: any) {
-      console.error('Failed to generate invoice:', error);
-      alert('Failed to generate invoice');
+    } catch (error) {
+      console.error('Error generating invoice:', error);
+      alert('Failed to generate invoice. Please try again.');
     }
   };
 
