@@ -18,7 +18,7 @@ const Products: React.FC = () => {
   const [_selectedCategory, _setSelectedCategory] = useState('');
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [inventoryAction, setInventoryAction] = useState<'add' | 'remove'>('add');
+  const [inventoryAction, _setInventoryAction] = useState<'add' | 'remove'>('add');
   const [inventoryQuantity, setInventoryQuantity] = useState(1);
 
   // Load products from API
