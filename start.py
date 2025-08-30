@@ -14,19 +14,24 @@ def main():
     print(f"Port: {os.environ.get('PORT', '5000')}")
     
     try:
-        from app import app
-        print("✅ App imported successfully")
+        from app_simple import app
+        print("✅ Simple app imported successfully")
         
         # Test the health endpoint
         with app.test_client() as client:
             response = client.get('/health')
             print(f"Health check response: {response.status_code}")
             print(f"Health check data: {response.get_json()}")
+            
+            # Test API endpoint
+            response = client.get('/api/test')
+            print(f"API test response: {response.status_code}")
+            print(f"API test data: {response.get_json()}")
         
         return app
         
     except Exception as e:
-        print(f"❌ Error starting app: {e}")
+        print(f"❌ Error starting simple app: {e}")
         import traceback
         traceback.print_exc()
         
