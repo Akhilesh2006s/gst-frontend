@@ -407,6 +407,80 @@ def create_invoice():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/invoices/<int:invoice_id>/download', methods=['GET'])
+def download_invoice_pdf(invoice_id):
+    try:
+        # Find the invoice
+        invoice = next((i for i in invoices if i['id'] == invoice_id), None)
+        if not invoice:
+            return jsonify({'success': False, 'error': 'Invoice not found'}), 404
+        
+        # For demo purposes, return a simple HTML response that can be converted to PDF
+        # In a real application, you would use a library like reportlab or weasyprint
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Invoice {invoice['invoice_number']}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+                .invoice-details {{ margin: 20px 0; }}
+                .customer-details {{ margin: 20px 0; }}
+                .items-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+                .items-table th, .items-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                .total {{ text-align: right; margin-top: 20px; font-weight: bold; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>GST Billing System</h1>
+                <h2>INVOICE</h2>
+                <p>Invoice Number: {invoice['invoice_number']}</p>
+                <p>Date: {invoice['created_at'][:10]}</p>
+            </div>
+            
+            <div class="customer-details">
+                <h3>Customer Details:</h3>
+                <p><strong>Name:</strong> {invoice['customer_name']}</p>
+                <p><strong>Email:</strong> {invoice['customer_email']}</p>
+            </div>
+            
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Quantity</th>
+                        <th>Price</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join([f"<tr><td>{item.get('name', 'Product')}</td><td>{item.get('quantity', 1)}</td><td>₹{item.get('price', 0)}</td><td>₹{item.get('total', 0)}</td></tr>" for item in invoice.get('items', [])])}
+                </tbody>
+            </table>
+            
+            <div class="total">
+                <p>Subtotal: ₹{invoice['total_amount']}</p>
+                <p>GST (18%): ₹{invoice['gst_amount']}</p>
+                <p><strong>Total Amount: ₹{invoice['total_amount'] + invoice['gst_amount']}</strong></p>
+            </div>
+            
+            <div style="margin-top: 40px; text-align: center;">
+                <p>Thank you for your business!</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        from flask import Response
+        return Response(html_content, mimetype='text/html', headers={
+            'Content-Disposition': f'attachment; filename=invoice_{invoice["invoice_number"]}.html'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
