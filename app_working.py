@@ -68,6 +68,8 @@ class Customer(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     phone = db.Column(db.String(20), nullable=True)
     address = db.Column(db.Text, nullable=True)
+    state = db.Column(db.String(50), nullable=True)
+    pincode = db.Column(db.String(10), nullable=True)
     password_hash = db.Column(db.String(200), nullable=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -440,8 +442,11 @@ def get_customers():
                 'name': c.name,
                 'email': c.email,
                 'phone': c.phone,
-                'address': c.address,
-                'created_at': c.created_at.isoformat()
+                'billing_address': c.address,  # Map 'address' to 'billing_address' for frontend
+                'state': c.state or '',  # Return actual state value
+                'pincode': c.pincode or '',  # Return actual pincode value
+                'created_at': c.created_at.isoformat(),
+                'is_active': c.is_active
             } for c in customers]
         })
     except Exception as e:
@@ -455,7 +460,8 @@ def create_customer():
         name = data.get('name')
         email = data.get('email')
         phone = data.get('phone')
-        address = data.get('address')
+        # Handle both 'address' and 'billing_address' field names
+        address = data.get('address') or data.get('billing_address')
         password = data.get('password', 'default123')
         
         if Customer.query.filter_by(email=email).first():
@@ -465,7 +471,9 @@ def create_customer():
             name=name,
             email=email,
             phone=phone,
-            address=address
+            address=address,
+            state=data.get('state', ''),
+            pincode=data.get('pincode', '')
         )
         customer.set_password(password)
         
