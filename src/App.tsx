@@ -4,6 +4,7 @@ import LoginPage from './components/auth/LoginPage';
 import SimpleLogin from './components/auth/SimpleLogin';
 import ForceLogin from './components/auth/ForceLogin';
 import DirectLogin from './components/auth/DirectLogin';
+import ResetLogin from './components/auth/ResetLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -100,7 +101,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <DirectLogin />
+                <ResetLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -252,6 +253,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Reset Login Route - Complete session reset */}
+          <Route 
+            path="/reset-login" 
+            element={<ResetLogin />} 
           />
 
           {/* Direct Login Route - One-click solution */}
