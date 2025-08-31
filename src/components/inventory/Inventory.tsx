@@ -48,6 +48,16 @@ const Inventory: React.FC = () => {
   });
 
   useEffect(() => {
+    // Check if user is authenticated
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    const userType = localStorage.getItem('userType');
+    
+    if (!isAuthenticated || userType !== 'admin') {
+      alert('Please login as admin to access inventory management');
+      window.location.href = '/login';
+      return;
+    }
+    
     loadInventory();
   }, []);
 
@@ -94,6 +104,16 @@ const Inventory: React.FC = () => {
   };
 
   const handleAddToInventory = async () => {
+    // Check authentication
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    const userType = localStorage.getItem('userType');
+    
+    if (!isAuthenticated || userType !== 'admin') {
+      alert('Please login as admin to add products');
+      window.location.href = '/login';
+      return;
+    }
+    
     // Validate required fields
     if (!newProduct.name || !newProduct.price || !newProduct.stock_quantity) {
       alert('Please fill in all required fields (Name, Price, and Stock Quantity)');
