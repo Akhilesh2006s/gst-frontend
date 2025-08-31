@@ -145,6 +145,15 @@ const Invoices: React.FC = () => {
             
             <div className="flex space-x-3">
               <button
+                onClick={() => navigate('/invoices/new')}
+                className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-3 rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center space-x-2"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Create Invoice</span>
+              </button>
+              <button
                 onClick={() => navigate('/dashboard')}
                 className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-xl font-medium transition-all duration-300 flex items-center space-x-2"
               >
@@ -239,7 +248,13 @@ const Invoices: React.FC = () => {
                     View Details
                   </button>
                   <button
-                    onClick={() => window.open(`/api/generate-pdf?invoice_id=${invoice.id}`, '_blank')}
+                    onClick={() => navigate(`/invoices/${invoice.id}/edit`)}
+                    className="bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-4 rounded-xl font-medium transition-all duration-300"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => window.open(`https://web-production-84a3.up.railway.app/api/invoices/${invoice.id}/download`, '_blank')}
                     className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-xl font-medium transition-all duration-300"
                   >
                     Download PDF
@@ -378,7 +393,25 @@ const Invoices: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex justify-end mt-6">
+            <div className="flex justify-end space-x-4 mt-6">
+              <button
+                onClick={() => navigate(`/invoices/${selectedInvoice.id}/edit`)}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-3 rounded-2xl font-medium transition-all duration-300 flex items-center space-x-2"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <span>Edit Invoice</span>
+              </button>
+              <button
+                onClick={() => window.open(`https://web-production-84a3.up.railway.app/api/invoices/${selectedInvoice.id}/download`, '_blank')}
+                className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-2xl font-medium transition-all duration-300 flex items-center space-x-2"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Download PDF</span>
+              </button>
               <button
                 onClick={() => setShowInvoiceModal(false)}
                 className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-2xl font-medium transition-all duration-300"

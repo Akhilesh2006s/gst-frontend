@@ -315,7 +315,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-8">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-3xl font-bold text-white">Invoices</h3>
-                <button className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-3 rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg">
+                <button 
+                  onClick={() => navigate('/invoices/new')}
+                  className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-3 rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg"
+                >
                   Create Invoice
                 </button>
               </div>
