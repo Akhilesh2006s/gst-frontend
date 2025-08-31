@@ -313,6 +313,64 @@ def get_admin_orders():
         'orders': orders
     })
 
+@app.route('/api/admin/orders/<int:order_id>/generate-invoice', methods=['POST'])
+def generate_invoice_from_order(order_id):
+    try:
+        # Find the order
+        order = next((o for o in orders if o['id'] == order_id), None)
+        if not order:
+            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        
+        # Create invoice from order
+        invoice = {
+            'id': len(invoices) + 1,
+            'invoice_number': f'INV-{len(invoices) + 1:04d}',
+            'customer_id': order.get('customer_id'),
+            'customer_name': order.get('customer_name', 'Unknown Customer'),
+            'customer_email': order.get('customer_email', 'unknown@example.com'),
+            'order_id': order_id,
+            'products': order.get('products', []),
+            'items': order.get('items', []),
+            'total_amount': order.get('total_amount', 0),
+            'gst_amount': order.get('total_amount', 0) * 0.18,  # 18% GST
+            'status': 'pending',
+            'created_at': datetime.utcnow().isoformat()
+        }
+        invoices.append(invoice)
+        
+        # Update order status
+        order['status'] = 'invoiced'
+        
+        return jsonify({
+            'success': True,
+            'message': 'Invoice generated successfully',
+            'invoice': invoice
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/orders/<int:order_id>/status', methods=['PUT'])
+def update_order_status(order_id):
+    try:
+        data = request.get_json()
+        new_status = data.get('status')
+        
+        # Find the order
+        order = next((o for o in orders if o['id'] == order_id), None)
+        if not order:
+            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        
+        # Update order status
+        order['status'] = new_status
+        
+        return jsonify({
+            'success': True,
+            'message': f'Order status updated to {new_status}',
+            'order': order
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Invoice routes
 @app.route('/api/invoices', methods=['GET'])
 def get_invoices():
