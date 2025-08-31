@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const SimpleLogin: React.FC = () => {
-  const navigate = useNavigate();
   const [email, setEmail] = useState('admin@gstbilling.com');
   const [password, setPassword] = useState('admin123');
   const [loading, setLoading] = useState(false);
