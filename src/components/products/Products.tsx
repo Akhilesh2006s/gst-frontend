@@ -30,7 +30,7 @@ const Products: React.FC = () => {
     try {
       setLoading(true);
       console.log('Loading products...');
-      const response = await fetch('/api/products/', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/products/', {
         credentials: 'include'
       });
       console.log('Products response status:', response.status);
