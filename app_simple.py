@@ -1,91 +1,175 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import os
+from datetime import datetime
 
-def create_app():
-    app = Flask(__name__)
-    
-    # Basic configuration
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
-    # Enable CORS
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": ["*"],
-            "supports_credentials": True,
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"]
+# Create Flask app
+app = Flask(__name__)
+
+# Enable CORS
+CORS(app, origins=["*"])
+
+# Simple in-memory storage for demo
+products = []
+customers = []
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'healthy', 
+        'message': 'GST Billing System API is running',
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+@app.route('/')
+def root():
+    return jsonify({
+        'status': 'healthy', 
+        'message': 'GST Billing System API is running',
+        'version': '1.0.0',
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+@app.route('/api/status')
+def api_status():
+    return jsonify({
+        'status': 'running',
+        'message': 'API is operational'
+    })
+
+# Product routes
+@app.route('/api/products', methods=['GET'])
+@app.route('/api/products/', methods=['GET'])
+def get_products():
+    return jsonify({
+        'success': True,
+        'products': products
+    })
+
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    try:
+        data = request.get_json()
+        product = {
+            'id': len(products) + 1,
+            'name': data.get('name'),
+            'description': data.get('description'),
+            'price': data.get('price'),
+            'stock_quantity': data.get('stock_quantity', 0),
+            'created_at': datetime.utcnow().isoformat()
+        }
+        products.append(product)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product created successfully',
+            'product': product
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/products/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    product = next((p for p in products if p['id'] == product_id), None)
+    if product:
+        return jsonify({
+            'success': True,
+            'product': product
+        })
+    else:
+        return jsonify({'success': False, 'message': 'Product not found'}), 404
+
+@app.route('/api/products/<int:product_id>/stock', methods=['POST'])
+def update_product_stock(product_id):
+    try:
+        product = next((p for p in products if p['id'] == product_id), None)
+        if not product:
+            return jsonify({'success': False, 'message': 'Product not found'}), 404
+        
+        data = request.get_json()
+        movement_type = data.get('movement_type')
+        quantity = data.get('quantity', 0)
+        
+        if movement_type == 'in':
+            product['stock_quantity'] += quantity
+        elif movement_type == 'out':
+            if product['stock_quantity'] >= quantity:
+                product['stock_quantity'] -= quantity
+            else:
+                return jsonify({'success': False, 'message': 'Insufficient stock'}), 400
+        
+        return jsonify({
+            'success': True,
+            'message': f'Stock updated successfully. New quantity: {product["stock_quantity"]}',
+            'new_quantity': product['stock_quantity']
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Customer routes
+@app.route('/api/admin/customers', methods=['GET'])
+def get_customers():
+    return jsonify({
+        'success': True,
+        'customers': customers
+    })
+
+@app.route('/api/admin/customers', methods=['POST'])
+def create_customer():
+    try:
+        data = request.get_json()
+        customer = {
+            'id': len(customers) + 1,
+            'name': data.get('name'),
+            'email': data.get('email'),
+            'phone': data.get('phone'),
+            'billing_address': data.get('billing_address'),
+            'state': data.get('state', ''),
+            'pincode': data.get('pincode', ''),
+            'created_at': datetime.utcnow().isoformat()
+        }
+        customers.append(customer)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Customer created successfully',
+            'customer': customer
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Auth routes (simplified)
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    return jsonify({
+        'success': True,
+        'message': 'Registration successful!'
+    })
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    return jsonify({
+        'success': True,
+        'message': 'Login successful!',
+        'user': {
+            'id': 1,
+            'username': 'admin',
+            'email': 'admin@test.com',
+            'business_name': 'Test Business'
         }
     })
-    
-    # Health check endpoints
-    @app.route('/health')
-    def health():
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
-    
-    @app.route('/')
-    def root():
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
-    
-    # Test API endpoints
-    @app.route('/api/test')
-    def test_api():
-        return jsonify({'message': 'API is working!'})
-    
-    @app.route('/api/super-admin/login', methods=['POST'])
-    def super_admin_login():
-        try:
-            data = request.get_json()
-            email = data.get('email')
-            password = data.get('password')
-            
-            # Simple test response
-            if email == 'admin@gstbilling.com' and password == 'admin123':
-                return jsonify({
-                    'success': True,
-                    'message': 'Login successful!',
-                    'super_admin': {
-                        'id': 1,
-                        'name': 'Super Admin',
-                        'email': email
-                    }
-                })
-            else:
-                return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
-                
-        except Exception as e:
-            return jsonify({'success': False, 'message': str(e)}), 500
-    
-    @app.route('/api/auth/login', methods=['POST'])
-    def auth_login():
-        try:
-            data = request.get_json()
-            email = data.get('email')
-            password = data.get('password')
-            
-            # Simple test response
-            if email == 'admin@gstbilling.com' and password == 'admin123':
-                return jsonify({
-                    'success': True,
-                    'message': 'Login successful!',
-                    'user': {
-                        'id': 1,
-                        'username': 'admin',
-                        'email': email
-                    }
-                })
-            else:
-                return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
-                
-        except Exception as e:
-            return jsonify({'success': False, 'message': str(e)}), 500
-    
-    return app
 
-# Create the app instance
-app = create_app()
+@app.route('/api/auth/check')
+def auth_check():
+    return jsonify({
+        'authenticated': True,
+        'user_type': 'admin',
+        'user': {
+            'id': 1,
+            'username': 'admin',
+            'email': 'admin@test.com'
+        }
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
