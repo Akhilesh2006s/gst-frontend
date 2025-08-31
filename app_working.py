@@ -30,19 +30,7 @@ CORS(app,
      max_age=86400
 )
 
-# Models
-class SuperAdmin(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-    
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -94,11 +82,7 @@ class Product(db.Model):
 # User loader
 @login_manager.user_loader
 def load_user(user_id):
-    # Try to load super admin first, then admin user, then customer
-    super_admin = SuperAdmin.query.get(int(user_id))
-    if super_admin:
-        return super_admin
-    
+    # Try to load admin user first, then customer
     user = User.query.get(int(user_id))
     if user:
         return user
@@ -140,7 +124,8 @@ def register():
             username=username,
             business_name=business_name,
             business_reason=business_reason,
-            is_approved=False
+            is_approved=True,  # Auto-approve all registrations
+            is_active=True
         )
         user.set_password(password)
         
@@ -149,7 +134,7 @@ def register():
         
         return jsonify({
             'success': True,
-            'message': 'Registration successful! Please wait for admin approval.'
+            'message': 'Registration successful! You can now login.'
         })
         
     except Exception as e:
@@ -190,18 +175,7 @@ def auth_logout():
 @app.route('/api/auth/check')
 def auth_check():
     if current_user.is_authenticated:
-        # Check if it's a SuperAdmin by checking the table name
-        if hasattr(current_user, '__tablename__') and current_user.__tablename__ == 'super_admin':
-            return jsonify({
-                'authenticated': True,
-                'user_type': 'super_admin',
-                'user': {
-                    'id': current_user.id,
-                    'name': current_user.name,
-                    'email': current_user.email
-                }
-            })
-        elif hasattr(current_user, 'business_name'):
+        if hasattr(current_user, 'business_name'):
             return jsonify({
                 'authenticated': True,
                 'user_type': 'admin',
@@ -223,89 +197,7 @@ def auth_check():
             })
     return jsonify({'authenticated': False}), 401
 
-# Super Admin routes
-@app.route('/api/super-admin/login', methods=['POST'])
-def super_admin_login():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        
-        super_admin = SuperAdmin.query.filter_by(email=email).first()
-        if super_admin and super_admin.check_password(password):
-            login_user(super_admin, remember=data.get('remember_me', False))
-            return jsonify({
-                'success': True,
-                'message': 'Login successful!',
-                'super_admin': {
-                    'id': super_admin.id,
-                    'name': super_admin.name,
-                    'email': super_admin.email
-                }
-            })
-        else:
-            return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
-            
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/super-admin/logout')
-@login_required
-def super_admin_logout():
-    logout_user()
-    return jsonify({'success': True, 'message': 'Logout successful'})
-
-@app.route('/api/super-admin/dashboard')
-@login_required
-def super_admin_dashboard():
-    try:
-        # Get pending admin registrations
-        pending_admins = User.query.filter_by(is_approved=False, is_active=True).all()
-        
-        # Get approved admins
-        approved_admins = User.query.filter_by(is_approved=True, is_active=True).all()
-        
-        # Get total customers
-        total_customers = Customer.query.filter_by(is_active=True).count()
-        
-        # Get total products
-        total_products = Product.query.filter_by(is_active=True).count()
-        
-        pending_list = []
-        for admin in pending_admins:
-            pending_list.append({
-                'id': admin.id,
-                'username': admin.username or '',
-                'email': admin.email or '',
-                'business_name': admin.business_name or '',
-                'business_reason': admin.business_reason or '',
-                'created_at': admin.created_at.isoformat()
-            })
-        
-        approved_list = []
-        for admin in approved_admins:
-            approved_list.append({
-                'id': admin.id,
-                'username': admin.username or '',
-                'email': admin.email or '',
-                'business_name': admin.business_name or '',
-                'approved_at': admin.approved_at.isoformat() if admin.approved_at else admin.created_at.isoformat()
-            })
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'pending_admins': len(pending_list),
-                'approved_admins': len(approved_list),
-                'total_customers': total_customers,
-                'total_products': total_products
-            },
-            'pending_admins': pending_list,
-            'approved_admins': approved_list
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/admin/dashboard')
 @login_required
@@ -325,44 +217,7 @@ def admin_dashboard():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/super-admin/approve-admin/<int:admin_id>', methods=['POST'])
-@login_required
-def approve_admin(admin_id):
-    try:
-        admin = User.query.get(admin_id)
-        if not admin:
-            return jsonify({'success': False, 'message': 'Admin not found'}), 404
-        
-        admin.is_approved = True
-        admin.approved_at = datetime.utcnow()
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Admin {admin.email} approved successfully!'
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/super-admin/reject-admin/<int:admin_id>', methods=['POST'])
-@login_required
-def reject_admin(admin_id):
-    try:
-        admin = User.query.get(admin_id)
-        if not admin:
-            return jsonify({'success': False, 'message': 'Admin not found'}), 404
-        
-        admin.is_active = False
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Admin {admin.email} rejected successfully!'
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 # Customer routes
 @app.route('/api/customer-auth/register', methods=['POST'])
@@ -890,24 +745,12 @@ def get_invoice_pdf(invoice_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# Initialize database and create super admin
+# Initialize database
 def init_db():
     with app.app_context():
         # Drop and recreate all tables to handle schema changes
         db.drop_all()
         db.create_all()
-        
-        # Create super admin if it doesn't exist
-        super_admin = SuperAdmin.query.filter_by(email='admin@gstbilling.com').first()
-        if not super_admin:
-            super_admin = SuperAdmin(
-                name='Super Admin',
-                email='admin@gstbilling.com'
-            )
-            super_admin.set_password('admin123')
-            db.session.add(super_admin)
-            db.session.commit()
-            print("Super admin created successfully!")
         print("Database initialized successfully!")
 
 # Initialize database when app starts
