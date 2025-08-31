@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
 import SimpleLogin from './components/auth/SimpleLogin';
+import ForceLogin from './components/auth/ForceLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -45,7 +46,28 @@ const App: React.FC = () => {
     const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
     
     if (isAuthenticated && storedUserType) {
-      setUserType(storedUserType);
+      // Verify authentication with backend
+      fetch('https://web-production-84a3.up.railway.app/api/auth/check', {
+        credentials: 'include'
+      })
+      .then(response => {
+        if (response.ok) {
+          setUserType(storedUserType);
+        } else {
+          // Clear stale data if backend says not authenticated
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
+          setUserType(null);
+        }
+      })
+      .catch(() => {
+        // Clear stale data on error
+        localStorage.removeItem('isAuthenticated');
+        localStorage.removeItem('userType');
+        localStorage.removeItem('userData');
+        setUserType(null);
+      });
     } else {
       // Clear any stale data
       localStorage.removeItem('isAuthenticated');
@@ -229,6 +251,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Force Login Route - Clears session and redirects */}
+          <Route 
+            path="/force-login" 
+            element={<ForceLogin />} 
           />
 
           {/* Simple Login Route */}

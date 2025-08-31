@@ -54,7 +54,7 @@ const Inventory: React.FC = () => {
     
     if (!isAuthenticated || userType !== 'admin') {
       alert('Please login as admin to access inventory management');
-      window.location.href = '/login';
+      window.location.href = '/force-login';
       return;
     }
     
@@ -110,7 +110,7 @@ const Inventory: React.FC = () => {
     
     if (!isAuthenticated || userType !== 'admin') {
       alert('Please login as admin to add products');
-      window.location.href = '/login';
+      window.location.href = '/force-login';
       return;
     }
     
