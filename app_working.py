@@ -20,7 +20,7 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = None
 
-# Enable CORS with more comprehensive configuration
+# Enable CORS with comprehensive configuration
 CORS(app, 
      origins=["*"],  # Allow all origins temporarily
      supports_credentials=True,
@@ -29,15 +29,6 @@ CORS(app,
      expose_headers=["Content-Type", "Authorization"],
      max_age=86400
 )
-
-# Add CORS headers to all responses
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Origin,Accept,X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 # Models
 class SuperAdmin(UserMixin, db.Model):
