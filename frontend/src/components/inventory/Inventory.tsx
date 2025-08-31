@@ -54,7 +54,7 @@ const Inventory: React.FC = () => {
   const loadInventory = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/products', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/products', {
         credentials: 'include'
       });
       if (response.ok) {

@@ -23,10 +23,21 @@ login_manager.login_view = None
 # Enable CORS
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["*"],
+        "origins": [
+            "http://localhost:3000",
+            "http://localhost:5173", 
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+            "https://web-production-84a3.up.railway.app",
+            "https://gst-frontend-ky783dbqt-akhilesh2006s-projects.vercel.app",
+            "https://gst-frontend-1t78fdlc3-akhilesh2006s-projects.vercel.app",
+            "https://gst-frontend-bay.vercel.app",
+            "https://gst-frontend.vercel.app"
+        ],
         "supports_credentials": True,
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization", "Origin", "Accept"],
+        "expose_headers": ["Content-Type", "Authorization"]
     }
 })
 
