@@ -534,7 +534,6 @@ def get_products():
                 'price': p.price,
                 'gst_rate': p.gst_rate,
                 'stock_quantity': p.stock_quantity,
-                'image_url': p.image_url,
                 'created_at': p.created_at.isoformat()
             } for p in products]
         })
