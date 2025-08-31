@@ -256,7 +256,7 @@ def super_admin_logout():
     return jsonify({'success': True, 'message': 'Logout successful'})
 
 @app.route('/api/super-admin/dashboard')
-# @login_required  # Temporarily disabled for testing
+@login_required
 def super_admin_dashboard():
     try:
         # Get pending admin registrations
