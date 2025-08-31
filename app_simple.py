@@ -71,6 +71,18 @@ orders = [
         'total_amount': 0,
         'status': 'pending',
         'created_at': datetime.utcnow().isoformat()
+    },
+    {
+        'id': 2,
+        'order_number': 'ORD-0002',
+        'customer_id': 2,
+        'customer_name': 'Jane Smith',
+        'customer_email': 'jane.smith@example.com',
+        'products': [],
+        'items': [],
+        'total_amount': 200.0,
+        'status': 'invoiced',
+        'created_at': datetime.utcnow().isoformat()
     }
 ]
 invoices = [
@@ -86,6 +98,20 @@ invoices = [
         'total_amount': 0,
         'gst_amount': 0,
         'status': 'pending',
+        'created_at': datetime.utcnow().isoformat()
+    },
+    {
+        'id': 2,
+        'invoice_number': 'INV-0002',
+        'customer_id': 2,
+        'customer_name': 'Jane Smith',
+        'customer_email': 'jane.smith@example.com',
+        'order_id': 2,
+        'products': [],
+        'items': [],
+        'total_amount': 200.0,
+        'gst_amount': 36.0,
+        'status': 'paid',
         'created_at': datetime.utcnow().isoformat()
     }
 ]
@@ -219,10 +245,10 @@ def create_customer():
 # Customer order routes
 @app.route('/api/customers/orders', methods=['GET'])
 def get_customer_orders():
-    # Return empty orders list for now
+    # Return orders for customer view
     return jsonify({
         'success': True,
-        'orders': []
+        'orders': orders
     })
 
 @app.route('/api/customers/orders', methods=['POST'])
@@ -529,6 +555,11 @@ def download_invoice_pdf(invoice_id):
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# Alternative PDF download endpoint (in case frontend uses different URL)
+@app.route('/api/invoices/<int:invoice_id>/pdf', methods=['GET'])
+def download_invoice_pdf_alt(invoice_id):
+    return download_invoice_pdf(invoice_id)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
