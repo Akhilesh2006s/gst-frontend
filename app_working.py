@@ -190,7 +190,8 @@ def auth_logout():
 @app.route('/api/auth/check')
 def auth_check():
     if current_user.is_authenticated:
-        if hasattr(current_user, 'is_super_admin'):
+        # Check if it's a SuperAdmin by checking the table name
+        if hasattr(current_user, '__tablename__') and current_user.__tablename__ == 'super_admin':
             return jsonify({
                 'authenticated': True,
                 'user_type': 'super_admin',
