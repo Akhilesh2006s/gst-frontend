@@ -502,6 +502,25 @@ def create_product():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/products/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    try:
+        product = Product.query.get_or_404(product_id)
+        return jsonify({
+            'success': True,
+            'product': {
+                'id': product.id,
+                'name': product.name,
+                'description': product.description,
+                'price': product.price,
+                'gst_rate': product.gst_rate,
+                'stock_quantity': product.stock_quantity,
+                'created_at': product.created_at.isoformat()
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/products/<int:product_id>', methods=['PUT'])
 @login_required
 def update_product(product_id):
