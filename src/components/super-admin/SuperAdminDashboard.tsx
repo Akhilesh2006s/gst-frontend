@@ -51,7 +51,8 @@ const SuperAdminDashboard: React.FC = () => {
       const userType = localStorage.getItem('userType');
       
       if (!userData || userType !== 'super_admin') {
-        setError('Not authenticated as Super Admin');
+        // Redirect to login if not authenticated
+        navigate('/login');
         return;
       }
       
@@ -60,6 +61,14 @@ const SuperAdminDashboard: React.FC = () => {
       });
       
       if (!response.ok) {
+        if (response.status === 401) {
+          // Unauthorized - clear storage and redirect to login
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
+          navigate('/login');
+          return;
+        }
         throw new Error('Failed to fetch dashboard data');
       }
       
