@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
 import SimpleLogin from './components/auth/SimpleLogin';
+import TestLogin from './components/auth/TestLogin';
 import Dashboard from './components/Dashboard';
 import SuperAdminDashboard from './components/super-admin/SuperAdminDashboard';
 
@@ -79,7 +80,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <SimpleLogin />
+                <TestLogin />
               ) : (
                 <Navigate to={
                   userType === 'super_admin' ? '/super-admin-dashboard' :
@@ -255,7 +256,7 @@ const App: React.FC = () => {
           {/* Test Login Route - Bypasses all routing */}
           <Route 
             path="/test-login" 
-            element={<SimpleLogin />} 
+            element={<TestLogin />} 
           />
 
           {/* Test route to check if styling is working */}
