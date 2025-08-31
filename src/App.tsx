@@ -256,7 +256,7 @@ const App: React.FC = () => {
           {/* Test Login Route - Bypasses all routing */}
           <Route 
             path="/test-login" 
-            element={<TestLogin />} 
+            element={<TestLogin onLogin={handleLogin} />} 
           />
 
           {/* Test route to check if styling is working */}
