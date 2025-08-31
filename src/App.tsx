@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './components/auth/LoginPage';
 import Dashboard from './components/Dashboard';
 import SuperAdminDashboard from './components/super-admin/SuperAdminDashboard';
-import AuthCheck from './components/auth/AuthCheck';
 
 // Import existing components
 import Products from './components/products/Products';
@@ -220,9 +219,7 @@ const App: React.FC = () => {
             path="/super-admin-dashboard" 
             element={
               userType === 'super_admin' ? (
-                <AuthCheck onAuthFail={() => setUserType(null)}>
-                  <SuperAdminDashboard />
-                </AuthCheck>
+                <SuperAdminDashboard />
               ) : (
                 <Navigate to="/login" />
               )

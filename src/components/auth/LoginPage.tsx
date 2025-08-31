@@ -76,16 +76,15 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         localStorage.setItem('userType', userType);
         localStorage.setItem('userData', JSON.stringify(data.super_admin || data.user || data.customer));
         
-        setTimeout(() => {
-          onLogin(userType);
-          if (userType === 'super_admin') {
-            navigate('/super-admin-dashboard');
-          } else if (userType === 'admin') {
-            navigate('/dashboard');
-          } else {
-            navigate('/customer-dashboard');
-          }
-        }, 1000);
+        // Redirect immediately
+        onLogin(userType);
+        if (userType === 'super_admin') {
+          navigate('/super-admin-dashboard');
+        } else if (userType === 'admin') {
+          navigate('/dashboard');
+        } else {
+          navigate('/customer-dashboard');
+        }
       } else {
         setError(data.message);
       }
