@@ -5,19 +5,39 @@ interface TestLoginProps {
 }
 
 const TestLogin: React.FC<TestLoginProps> = ({ onLogin }) => {
-  const handleLogin = () => {
-    // Simple login function
-    const userData = {
-      id: 1,
-      name: 'Super Admin',
-      email: 'admin@gstbilling.com'
-    };
-    
-    localStorage.setItem('isAuthenticated', 'true');
-    localStorage.setItem('userType', 'super_admin');
-    localStorage.setItem('userData', JSON.stringify(userData));
-    onLogin('super_admin'); // Update parent state
-    window.location.href = '/super-admin-dashboard';
+  const handleLogin = async () => {
+    try {
+      // Actually login to the backend first
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/super-admin/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: 'admin@gstbilling.com',
+          password: 'admin123',
+          remember_me: true
+        }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Set localStorage
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('userType', 'super_admin');
+        localStorage.setItem('userData', JSON.stringify(data.super_admin));
+        onLogin('super_admin'); // Update parent state
+        
+        // Redirect to dashboard
+        window.location.href = '/super-admin-dashboard';
+      } else {
+        alert('Login failed: ' + data.message);
+      }
+    } catch (err) {
+      alert('Login error: ' + err);
+    }
   };
 
   return (
