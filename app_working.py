@@ -905,6 +905,22 @@ def init_db():
             db.session.add(super_admin)
             db.session.commit()
             print("Super admin created successfully!")
+        
+        # Create a regular admin account if it doesn't exist
+        admin = User.query.filter_by(email='regularadmin@gstbilling.com').first()
+        if not admin:
+            admin = User(
+                email='regularadmin@gstbilling.com',
+                username='regularadmin',
+                business_name='Regular Business Admin',
+                business_reason='For testing customer management',
+                is_approved=True,
+                is_active=True
+            )
+            admin.set_password('admin123')
+            db.session.add(admin)
+            db.session.commit()
+            print("Regular admin created successfully!")
 
 # Initialize database when app starts
 init_db()
