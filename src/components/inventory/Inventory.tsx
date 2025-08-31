@@ -59,7 +59,7 @@ const Inventory: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        const products = data.inventory || [];
+        const products = data.products || [];
         
         // Transform products to inventory items
         const inventoryItems: InventoryItem[] = products.map((product: any) => ({
