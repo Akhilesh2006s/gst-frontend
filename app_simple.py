@@ -6,8 +6,15 @@ from datetime import datetime
 # Create Flask app
 app = Flask(__name__)
 
-# Enable CORS
-CORS(app, origins=["*"])
+# Enable CORS with credentials support
+CORS(app, 
+     origins=["*"],
+     supports_credentials=True,
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "Origin", "Accept", "X-Requested-With"],
+     expose_headers=["Content-Type", "Authorization"],
+     max_age=86400
+)
 
 # Simple in-memory storage for demo
 products = []
