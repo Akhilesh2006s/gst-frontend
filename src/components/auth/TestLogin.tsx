@@ -7,8 +7,15 @@ interface TestLoginProps {
 const TestLogin: React.FC<TestLoginProps> = ({ onLogin }) => {
   const handleLogin = () => {
     // Simple login function
+    const userData = {
+      id: 1,
+      name: 'Super Admin',
+      email: 'admin@gstbilling.com'
+    };
+    
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('userType', 'super_admin');
+    localStorage.setItem('userData', JSON.stringify(userData));
     onLogin('super_admin'); // Update parent state
     window.location.href = '/super-admin-dashboard';
   };
