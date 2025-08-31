@@ -94,6 +94,12 @@ const Inventory: React.FC = () => {
   };
 
   const handleAddToInventory = async () => {
+    // Validate required fields
+    if (!newProduct.name || !newProduct.price || !newProduct.stock_quantity) {
+      alert('Please fill in all required fields (Name, Price, and Stock Quantity)');
+      return;
+    }
+    
     try {
       const response = await fetch('/api/products', {
         method: 'POST',
@@ -103,12 +109,9 @@ const Inventory: React.FC = () => {
         credentials: 'include',
         body: JSON.stringify({
           name: newProduct.name,
-          sku: newProduct.sku,
           description: newProduct.description,
-          category: newProduct.category,
           price: parseFloat(newProduct.price),
           stock_quantity: parseInt(newProduct.stock_quantity),
-          min_stock_level: parseInt(newProduct.min_stock_level),
           image_url: newProduct.image_url
         })
       });
@@ -129,11 +132,17 @@ const Inventory: React.FC = () => {
         });
         await loadInventory();
       } else {
-        const error = await response.json();
-        alert(`Failed to add product: ${error.error}`);
+        try {
+          const errorData = await response.json();
+          const errorMessage = errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+          alert(`Failed to add product: ${errorMessage}`);
+        } catch (parseError) {
+          alert(`Failed to add product: HTTP ${response.status}: ${response.statusText}`);
+        }
       }
     } catch (error: any) {
-      alert(`Failed to add product: ${error.message}`);
+      const errorMessage = error.message || 'Unknown error occurred';
+      alert(`Failed to add product: ${errorMessage}`);
     }
   };
 
