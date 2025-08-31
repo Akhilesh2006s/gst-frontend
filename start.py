@@ -14,8 +14,8 @@ def main():
     print(f"Port: {os.environ.get('PORT', '5000')}")
     
     try:
-        from app_simple import app
-        print("✅ Simple app imported successfully")
+        from app_working import app
+        print("✅ Working app imported successfully")
         
         # Test the health endpoint
         with app.test_client() as client:
@@ -31,7 +31,7 @@ def main():
         return app
         
     except Exception as e:
-        print(f"❌ Error starting simple app: {e}")
+        print(f"❌ Error starting working app: {e}")
         import traceback
         traceback.print_exc()
         
