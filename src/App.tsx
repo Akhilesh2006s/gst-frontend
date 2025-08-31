@@ -79,7 +79,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <LoginPage onLogin={handleLogin} />
+                <SimpleLogin />
               ) : (
                 <Navigate to={
                   userType === 'super_admin' ? '/super-admin-dashboard' :
