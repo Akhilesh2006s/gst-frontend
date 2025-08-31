@@ -20,6 +20,7 @@ CORS(app,
 products = []
 customers = []
 orders = []
+invoices = []
 
 @app.route('/health')
 def health():
@@ -174,6 +175,39 @@ def create_customer_order():
             'success': True,
             'message': 'Order created successfully',
             'order': order
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Customer invoice routes
+@app.route('/api/customers/invoices', methods=['GET'])
+def get_customer_invoices():
+    # Return empty invoices list for now
+    return jsonify({
+        'success': True,
+        'invoices': []
+    })
+
+@app.route('/api/customers/invoices', methods=['POST'])
+def create_customer_invoice():
+    try:
+        data = request.get_json()
+        invoice = {
+            'id': len(invoices) + 1,
+            'customer_id': data.get('customer_id'),
+            'order_id': data.get('order_id'),
+            'products': data.get('products', []),
+            'total_amount': data.get('total_amount', 0),
+            'gst_amount': data.get('gst_amount', 0),
+            'status': 'pending',
+            'created_at': datetime.utcnow().isoformat()
+        }
+        invoices.append(invoice)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Invoice created successfully',
+            'invoice': invoice
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
