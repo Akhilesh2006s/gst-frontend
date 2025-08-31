@@ -42,11 +42,18 @@ const App: React.FC = () => {
 
   // Check for stored user type on app load
   React.useEffect(() => {
-    // Clear any existing authentication data to force fresh login
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('userType');
-    localStorage.removeItem('userData');
-    setUserType(null);
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | 'super_admin' | null;
+    
+    if (isAuthenticated && storedUserType) {
+      setUserType(storedUserType);
+    } else {
+      // Clear any stale data
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userType');
+      localStorage.removeItem('userData');
+      setUserType(null);
+    }
   }, []);
 
   return (

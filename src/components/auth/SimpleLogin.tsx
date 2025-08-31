@@ -31,18 +31,18 @@ const SimpleLogin: React.FC = () => {
 
       const data = await response.json();
 
-      if (data.success) {
-        setSuccess('Login successful! Redirecting...');
-        // Store authentication state
-        localStorage.setItem('isAuthenticated', 'true');
-        localStorage.setItem('userType', 'super_admin');
-        localStorage.setItem('userData', JSON.stringify(data.super_admin));
-        
-        // Redirect to dashboard
-        setTimeout(() => {
-          navigate('/super-admin-dashboard');
-        }, 1000);
-      } else {
+             if (data.success) {
+         setSuccess('Login successful! Redirecting...');
+         // Store authentication state
+         localStorage.setItem('isAuthenticated', 'true');
+         localStorage.setItem('userType', 'super_admin');
+         localStorage.setItem('userData', JSON.stringify(data.super_admin));
+         
+         // Force a page reload to ensure clean state
+         setTimeout(() => {
+           window.location.href = '/super-admin-dashboard';
+         }, 1000);
+       } else {
         setError(data.message || 'Login failed');
       }
     } catch (err) {
