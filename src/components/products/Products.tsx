@@ -31,7 +31,10 @@ const Products: React.FC = () => {
       setLoading(true);
       console.log('Loading products...');
       const response = await fetch('https://web-production-84a3.up.railway.app/api/products/', {
-        credentials: 'include'
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
       console.log('Products response status:', response.status);
       if (response.ok) {
