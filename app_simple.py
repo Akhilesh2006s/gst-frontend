@@ -35,14 +35,37 @@ products = [
         'created_at': datetime.utcnow().isoformat()
     }
 ]
-customers = []
+customers = [
+    {
+        'id': 1,
+        'name': 'John Doe',
+        'email': 'john.doe@example.com',
+        'phone': '+91 9876543210',
+        'billing_address': '123 Main Street, Mumbai, Maharashtra',
+        'state': 'Maharashtra',
+        'pincode': '400001',
+        'created_at': datetime.utcnow().isoformat(),
+        'is_active': True
+    },
+    {
+        'id': 2,
+        'name': 'Jane Smith',
+        'email': 'jane.smith@example.com',
+        'phone': '+91 8765432109',
+        'billing_address': '456 Park Avenue, Delhi, Delhi',
+        'state': 'Delhi',
+        'pincode': '110001',
+        'created_at': datetime.utcnow().isoformat(),
+        'is_active': True
+    }
+]
 orders = [
     {
         'id': 1,
         'order_number': 'ORD-0001',
         'customer_id': 1,
-        'customer_name': 'Sample Customer',
-        'customer_email': 'customer@example.com',
+        'customer_name': 'John Doe',
+        'customer_email': 'john.doe@example.com',
         'products': [],
         'items': [],
         'total_amount': 0,
@@ -55,8 +78,8 @@ invoices = [
         'id': 1,
         'invoice_number': 'INV-0001',
         'customer_id': 1,
-        'customer_name': 'Sample Customer',
-        'customer_email': 'customer@example.com',
+        'customer_name': 'John Doe',
+        'customer_email': 'john.doe@example.com',
         'order_id': 1,
         'products': [],
         'items': [],
@@ -206,12 +229,25 @@ def get_customer_orders():
 def create_customer_order():
     try:
         data = request.get_json()
+        
+        # Try to find customer information
+        customer_id = data.get('customer_id')
+        customer_name = data.get('customer_name', 'Unknown Customer')
+        customer_email = data.get('customer_email', 'unknown@example.com')
+        
+        # If customer_id is provided, try to find customer details
+        if customer_id:
+            customer = next((c for c in customers if c['id'] == customer_id), None)
+            if customer:
+                customer_name = customer['name']
+                customer_email = customer['email']
+        
         order = {
             'id': len(orders) + 1,
             'order_number': f'ORD-{len(orders) + 1:04d}',
-            'customer_id': data.get('customer_id'),
-            'customer_name': data.get('customer_name', 'Unknown Customer'),
-            'customer_email': data.get('customer_email', 'unknown@example.com'),
+            'customer_id': customer_id,
+            'customer_name': customer_name,
+            'customer_email': customer_email,
             'products': data.get('products', []),
             'items': data.get('products', []),  # Add items field for compatibility
             'total_amount': data.get('total_amount', 0),
@@ -241,12 +277,25 @@ def get_customer_invoices():
 def create_customer_invoice():
     try:
         data = request.get_json()
+        
+        # Try to find customer information
+        customer_id = data.get('customer_id')
+        customer_name = data.get('customer_name', 'Unknown Customer')
+        customer_email = data.get('customer_email', 'unknown@example.com')
+        
+        # If customer_id is provided, try to find customer details
+        if customer_id:
+            customer = next((c for c in customers if c['id'] == customer_id), None)
+            if customer:
+                customer_name = customer['name']
+                customer_email = customer['email']
+        
         invoice = {
             'id': len(invoices) + 1,
             'invoice_number': f'INV-{len(invoices) + 1:04d}',
-            'customer_id': data.get('customer_id'),
-            'customer_name': data.get('customer_name', 'Unknown Customer'),
-            'customer_email': data.get('customer_email', 'unknown@example.com'),
+            'customer_id': customer_id,
+            'customer_name': customer_name,
+            'customer_email': customer_email,
             'order_id': data.get('order_id'),
             'products': data.get('products', []),
             'items': data.get('products', []),  # Add items field for compatibility
