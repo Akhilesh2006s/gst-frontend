@@ -44,13 +44,13 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       let endpoint = '';
       switch (userType) {
         case 'admin':
-          endpoint = '/api/auth/login';
+          endpoint = 'https://web-production-84a3.up.railway.app/api/auth/login';
           break;
         case 'customer':
-          endpoint = '/api/customer-auth/login';
+          endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/login';
           break;
         case 'super_admin':
-          endpoint = '/api/super-admin/login';
+          endpoint = 'https://web-production-84a3.up.railway.app/api/super-admin/login';
           break;
       }
 
@@ -118,7 +118,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       };
 
       if (userType === 'admin') {
-        endpoint = '/api/auth/register';
+        endpoint = 'https://web-production-84a3.up.railway.app/api/auth/register';
         payload = {
           ...payload,
           business_name: formData.businessName,
@@ -129,7 +129,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           business_pincode: formData.pincode || ''
         };
       } else if (userType === 'customer') {
-        endpoint = '/api/customer-auth/register';
+        endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/register';
         payload = {
           ...payload,
           phone: formData.phone,
@@ -188,7 +188,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
     setSuccess('');
 
     try {
-      const response = await fetch('/api/auth/forgot-password', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/auth/forgot-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

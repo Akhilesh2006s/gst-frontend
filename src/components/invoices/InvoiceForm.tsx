@@ -198,7 +198,7 @@ const InvoiceForm: React.FC = () => {
     console.log('Sending invoice data:', requestData);
 
     try {
-      const response = await fetch('/api/invoices', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/invoices', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

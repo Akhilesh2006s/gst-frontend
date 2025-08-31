@@ -46,7 +46,7 @@ const SuperAdminDashboard: React.FC = () => {
 
   const fetchDashboardData = async () => {
     try {
-      const response = await fetch('/api/super-admin/dashboard', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/super-admin/dashboard', {
         credentials: 'include'
       });
       
@@ -74,7 +74,7 @@ const SuperAdminDashboard: React.FC = () => {
   const handleApprove = async (adminId: number) => {
     setProcessingAction(adminId);
     try {
-      const response = await fetch(`/api/super-admin/approve-admin/${adminId}`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/super-admin/approve-admin/${adminId}`, {
         method: 'POST',
         credentials: 'include'
       });
@@ -100,7 +100,7 @@ const SuperAdminDashboard: React.FC = () => {
     
     setProcessingAction(adminId);
     try {
-      const response = await fetch(`/api/super-admin/reject-admin/${adminId}`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/super-admin/reject-admin/${adminId}`, {
         method: 'POST',
         credentials: 'include'
       });
