@@ -304,6 +304,24 @@ def super_admin_dashboard():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/admin/dashboard')
+@login_required
+def admin_dashboard():
+    try:
+        # Get basic stats
+        total_customers = Customer.query.filter_by(is_active=True).count()
+        total_products = Product.query.filter_by(is_active=True).count()
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total_customers': total_customers,
+                'total_products': total_products
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/super-admin/approve-admin/<int:admin_id>', methods=['POST'])
 @login_required
 def approve_admin(admin_id):
@@ -409,6 +427,99 @@ def customer_logout():
     logout_user()
     return jsonify({'success': True, 'message': 'Logout successful'})
 
+# Admin routes
+@app.route('/api/admin/customers', methods=['GET'])
+@login_required
+def get_customers():
+    try:
+        customers = Customer.query.filter_by(is_active=True).all()
+        return jsonify({
+            'success': True,
+            'customers': [{
+                'id': c.id,
+                'name': c.name,
+                'email': c.email,
+                'phone': c.phone,
+                'address': c.address,
+                'created_at': c.created_at.isoformat()
+            } for c in customers]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/admin/customers', methods=['POST'])
+@login_required
+def create_customer():
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        email = data.get('email')
+        phone = data.get('phone')
+        address = data.get('address')
+        password = data.get('password', 'default123')
+        
+        if Customer.query.filter_by(email=email).first():
+            return jsonify({'success': False, 'message': 'Email already exists'}), 400
+        
+        customer = Customer(
+            name=name,
+            email=email,
+            phone=phone,
+            address=address
+        )
+        customer.set_password(password)
+        
+        db.session.add(customer)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Customer created successfully',
+            'customer': {
+                'id': customer.id,
+                'name': customer.name,
+                'email': customer.email
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/admin/customers/<int:customer_id>', methods=['PUT'])
+@login_required
+def update_customer(customer_id):
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        data = request.get_json()
+        
+        customer.name = data.get('name', customer.name)
+        customer.email = data.get('email', customer.email)
+        customer.phone = data.get('phone', customer.phone)
+        customer.address = data.get('address', customer.address)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Customer updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/admin/customers/<int:customer_id>', methods=['DELETE'])
+@login_required
+def delete_customer(customer_id):
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        customer.is_active = False
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Customer deleted successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # Product routes
 @app.route('/api/products', methods=['GET'])
 def get_products():
@@ -422,8 +533,85 @@ def get_products():
                 'description': p.description,
                 'price': p.price,
                 'gst_rate': p.gst_rate,
-                'stock_quantity': p.stock_quantity
+                'stock_quantity': p.stock_quantity,
+                'image_url': p.image_url,
+                'created_at': p.created_at.isoformat()
             } for p in products]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/products', methods=['POST'])
+@login_required
+def create_product():
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        description = data.get('description')
+        price = data.get('price')
+        gst_rate = data.get('gst_rate', 18.0)
+        stock_quantity = data.get('stock_quantity', 0)
+        image_url = data.get('image_url', '')
+        
+        product = Product(
+            name=name,
+            description=description,
+            price=price,
+            gst_rate=gst_rate,
+            stock_quantity=stock_quantity,
+            image_url=image_url,
+            admin_id=current_user.id
+        )
+        
+        db.session.add(product)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product created successfully',
+            'product': {
+                'id': product.id,
+                'name': product.name,
+                'price': product.price
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/products/<int:product_id>', methods=['PUT'])
+@login_required
+def update_product(product_id):
+    try:
+        product = Product.query.get_or_404(product_id)
+        data = request.get_json()
+        
+        product.name = data.get('name', product.name)
+        product.description = data.get('description', product.description)
+        product.price = data.get('price', product.price)
+        product.gst_rate = data.get('gst_rate', product.gst_rate)
+        product.stock_quantity = data.get('stock_quantity', product.stock_quantity)
+        product.image_url = data.get('image_url', product.image_url)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/products/<int:product_id>', methods=['DELETE'])
+@login_required
+def delete_product(product_id):
+    try:
+        product = Product.query.get_or_404(product_id)
+        product.is_active = False
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product deleted successfully'
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
