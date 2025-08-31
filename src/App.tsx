@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
+import SimpleLogin from './components/auth/SimpleLogin';
 import Dashboard from './components/Dashboard';
 import SuperAdminDashboard from './components/super-admin/SuperAdminDashboard';
 
@@ -236,6 +237,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Simple Login Route */}
+          <Route 
+            path="/simple-login" 
+            element={<SimpleLogin />} 
           />
 
           {/* Test route to check if styling is working */}
