@@ -233,6 +233,13 @@ def auth_login():
         }
     })
 
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    return jsonify({
+        'success': True,
+        'message': 'Logout successful!'
+    })
+
 @app.route('/api/auth/check')
 def auth_check():
     return jsonify({
@@ -244,6 +251,46 @@ def auth_check():
             'email': 'admin@test.com'
         }
     })
+
+# Admin order routes
+@app.route('/api/admin/orders', methods=['GET'])
+def get_admin_orders():
+    return jsonify({
+        'success': True,
+        'orders': orders
+    })
+
+# Invoice routes
+@app.route('/api/invoices', methods=['GET'])
+def get_invoices():
+    return jsonify({
+        'success': True,
+        'invoices': invoices
+    })
+
+@app.route('/api/invoices', methods=['POST'])
+def create_invoice():
+    try:
+        data = request.get_json()
+        invoice = {
+            'id': len(invoices) + 1,
+            'customer_id': data.get('customer_id'),
+            'order_id': data.get('order_id'),
+            'products': data.get('products', []),
+            'total_amount': data.get('total_amount', 0),
+            'gst_amount': data.get('gst_amount', 0),
+            'status': 'pending',
+            'created_at': datetime.utcnow().isoformat()
+        }
+        invoices.append(invoice)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Invoice created successfully',
+            'invoice': invoice
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
