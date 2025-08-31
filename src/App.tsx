@@ -7,6 +7,7 @@ import DirectLogin from './components/auth/DirectLogin';
 import ResetLogin from './components/auth/ResetLogin';
 import FinalLogin from './components/auth/FinalLogin';
 import QuickLogin from './components/auth/QuickLogin';
+import InstantLogin from './components/auth/InstantLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -103,7 +104,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <QuickLogin />
+                <InstantLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -255,6 +256,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Instant Login Route - SUBMISSION SOLUTION */}
+          <Route 
+            path="/instant-login" 
+            element={<InstantLogin />} 
           />
 
           {/* Quick Login Route - One-click solution */}
