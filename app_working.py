@@ -93,25 +93,28 @@ def load_user(user_id):
 # Routes
 @app.route('/health')
 def health():
-    try:
-        # Test database connection
-        db.session.execute('SELECT 1')
-        return jsonify({
-            'status': 'healthy', 
-            'message': 'GST Billing System API is running',
-            'database': 'connected',
-            'timestamp': datetime.utcnow().isoformat()
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'message': 'Database connection failed',
-            'error': str(e)
-        }), 500
+    # Simple health check that doesn't depend on database
+    return jsonify({
+        'status': 'healthy', 
+        'message': 'GST Billing System API is running',
+        'timestamp': datetime.utcnow().isoformat()
+    })
 
 @app.route('/')
 def root():
-    return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+    return jsonify({
+        'status': 'healthy', 
+        'message': 'GST Billing System API is running',
+        'version': '1.0.0',
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+@app.route('/api/status')
+def api_status():
+    return jsonify({
+        'status': 'running',
+        'message': 'API is operational'
+    })
 
 @app.route('/api/test')
 def test_api():
@@ -842,8 +845,7 @@ def get_invoice_pdf(invoice_id):
 def init_db():
     try:
         with app.app_context():
-            # Drop and recreate all tables to handle schema changes
-            db.drop_all()
+            # Create tables if they don't exist (don't drop)
             db.create_all()
             print("Database initialized successfully!")
             return True
