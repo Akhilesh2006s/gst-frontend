@@ -551,7 +551,6 @@ def create_product():
         price = data.get('price')
         gst_rate = data.get('gst_rate', 18.0)
         stock_quantity = data.get('stock_quantity', 0)
-        image_url = data.get('image_url', '')
         
         product = Product(
             name=name,
@@ -559,7 +558,6 @@ def create_product():
             price=price,
             gst_rate=gst_rate,
             stock_quantity=stock_quantity,
-            image_url=image_url,
             admin_id=current_user.id
         )
         
@@ -590,7 +588,6 @@ def update_product(product_id):
         product.price = data.get('price', product.price)
         product.gst_rate = data.get('gst_rate', product.gst_rate)
         product.stock_quantity = data.get('stock_quantity', product.stock_quantity)
-        product.image_url = data.get('image_url', product.image_url)
         
         db.session.commit()
         

@@ -54,7 +54,7 @@ const Inventory: React.FC = () => {
   const loadInventory = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/products/inventory', {
+      const response = await fetch('/api/products', {
         credentials: 'include'
       });
       if (response.ok) {
@@ -94,23 +94,29 @@ const Inventory: React.FC = () => {
   };
 
   const handleAddToInventory = async () => {
+    // Validate required fields
+    if (!newProduct.name || !newProduct.price || !newProduct.stock_quantity) {
+      alert('Please fill in all required fields (Name, Price, and Stock Quantity)');
+      return;
+    }
+    
     try {
-      const response = await fetch('/api/products/inventory/add', {
+      const requestBody = {
+        name: newProduct.name,
+        description: newProduct.description,
+        price: parseFloat(newProduct.price),
+        stock_quantity: parseInt(newProduct.stock_quantity)
+      };
+      
+      console.log('Sending product data:', requestBody);
+      
+      const response = await fetch('/api/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({
-          name: newProduct.name,
-          sku: newProduct.sku,
-          description: newProduct.description,
-          category: newProduct.category,
-          price: parseFloat(newProduct.price),
-          stock_quantity: parseInt(newProduct.stock_quantity),
-          min_stock_level: parseInt(newProduct.min_stock_level),
-          image_url: newProduct.image_url
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (response.ok) {
@@ -129,11 +135,17 @@ const Inventory: React.FC = () => {
         });
         await loadInventory();
       } else {
-        const error = await response.json();
-        alert(`Failed to add product: ${error.error}`);
+        try {
+          const errorData = await response.json();
+          const errorMessage = errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+          alert(`Failed to add product: ${errorMessage}`);
+        } catch (parseError) {
+          alert(`Failed to add product: HTTP ${response.status}: ${response.statusText}`);
+        }
       }
     } catch (error: any) {
-      alert(`Failed to add product: ${error.message}`);
+      const errorMessage = error.message || 'Unknown error occurred';
+      alert(`Failed to add product: ${errorMessage}`);
     }
   };
 
@@ -249,6 +261,19 @@ const Inventory: React.FC = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Quick Add Product Button */}
+        <div className="mb-6 flex justify-center">
+          <button
+            onClick={() => setShowAddToInventoryModal(true)}
+            className="inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-2xl text-white bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-all duration-300 transform hover:scale-105 shadow-lg"
+          >
+            <svg className="h-6 w-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add New Product to Inventory
+          </button>
+        </div>
+
         {/* Summary Cards */}
         {summary && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -414,8 +439,8 @@ const Inventory: React.FC = () => {
 
         {/* Add to Inventory Modal - Side by Side Layout */}
         {showAddToInventoryModal && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-8 max-w-4xl w-full mx-4">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
               <h3 className="text-2xl font-bold text-white mb-6">Add Product to Inventory</h3>
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -610,7 +635,7 @@ const Inventory: React.FC = () => {
                 </div>
               </div>
               
-              <div className="flex space-x-4 mt-8">
+              <div className="flex space-x-4 mt-8 sticky bottom-0 bg-gradient-to-br from-slate-900/95 via-purple-900/95 to-slate-900/95 backdrop-blur-xl p-4 -mx-8 -mb-8 border-t border-white/10">
                 <button
                   onClick={() => setShowAddToInventoryModal(false)}
                   className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-3 px-4 rounded-2xl font-medium transition-all duration-300"
