@@ -51,7 +51,7 @@ const Invoices: React.FC = () => {
   const loadInvoices = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/invoices', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/invoices', {
         credentials: 'include'
       });
       if (response.ok) {

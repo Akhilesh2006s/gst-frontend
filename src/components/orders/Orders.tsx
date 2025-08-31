@@ -43,7 +43,7 @@ const Orders: React.FC = () => {
   const loadOrders = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/admin/orders', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/admin/orders', {
         credentials: 'include'
       });
       if (response.ok) {
@@ -59,7 +59,7 @@ const Orders: React.FC = () => {
 
   const updateOrderStatus = async (orderId: number, status: string) => {
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/status`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/admin/orders/${orderId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -78,7 +78,7 @@ const Orders: React.FC = () => {
 
   const generateInvoice = async (orderId: number) => {
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/generate-invoice`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/admin/orders/${orderId}/generate-invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
