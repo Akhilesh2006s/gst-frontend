@@ -111,8 +111,7 @@ const Inventory: React.FC = () => {
           name: newProduct.name,
           description: newProduct.description,
           price: parseFloat(newProduct.price),
-          stock_quantity: parseInt(newProduct.stock_quantity),
-          image_url: newProduct.image_url
+          stock_quantity: parseInt(newProduct.stock_quantity)
         })
       });
 
