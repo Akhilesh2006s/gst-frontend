@@ -1,10 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
-import SimpleLogin from './components/auth/SimpleLogin';
-import TestLogin from './components/auth/TestLogin';
 import Dashboard from './components/Dashboard';
-import SuperAdminDashboard from './components/super-admin/SuperAdminDashboard';
 
 // Import existing components
 import Products from './components/products/Products';
@@ -21,9 +18,9 @@ import CustomerDashboard from './components/customer/CustomerDashboard';
 import Orders from './components/orders/Orders';
 
 const App: React.FC = () => {
-  const [userType, setUserType] = useState<'admin' | 'customer' | 'super_admin' | null>(null);
+  const [userType, setUserType] = useState<'admin' | 'customer' | null>(null);
 
-  const handleLogin = (type: 'admin' | 'customer' | 'super_admin') => {
+  const handleLogin = (type: 'admin' | 'customer') => {
     setUserType(type);
     // Store user type in localStorage for persistence
     localStorage.setItem('userType', type);
@@ -35,7 +32,7 @@ const App: React.FC = () => {
     localStorage.removeItem('isAuthenticated');
     localStorage.removeItem('userData');
     // Also call logout endpoint to clear server session
-    fetch('https://web-production-84a3.up.railway.app/api/super-admin/logout', {
+    fetch('https://web-production-84a3.up.railway.app/api/auth/logout', {
       method: 'POST',
       credentials: 'include'
     }).catch(() => {}); // Ignore errors
@@ -44,7 +41,7 @@ const App: React.FC = () => {
   // Check for stored user type on app load
   React.useEffect(() => {
     const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | 'super_admin' | null;
+    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
     
     if (isAuthenticated && storedUserType) {
       setUserType(storedUserType);
@@ -69,7 +66,6 @@ const App: React.FC = () => {
                 <LoginPage onLogin={handleLogin} />
               ) : (
                 <Navigate to={
-                  userType === 'super_admin' ? '/super-admin-dashboard' :
                   userType === 'customer' ? '/customer-dashboard' :
                   '/dashboard'
                 } />
@@ -80,10 +76,9 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <TestLogin onLogin={handleLogin} />
+                <LoginPage onLogin={handleLogin} />
               ) : (
                 <Navigate to={
-                  userType === 'super_admin' ? '/super-admin-dashboard' :
                   userType === 'customer' ? '/customer-dashboard' :
                   '/dashboard'
                 } />
@@ -223,18 +218,6 @@ const App: React.FC = () => {
             } 
           />
 
-          {/* Super Admin Routes */}
-          <Route 
-            path="/super-admin-dashboard" 
-            element={
-              userType === 'super_admin' ? (
-                <SuperAdminDashboard />
-              ) : (
-                <Navigate to="/login" />
-              )
-            } 
-          />
-
           {/* Customer Routes */}
           <Route 
             path="/customer-dashboard" 
@@ -245,18 +228,6 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
-          />
-
-          {/* Simple Login Route */}
-          <Route 
-            path="/simple-login" 
-            element={<SimpleLogin />} 
-          />
-
-          {/* Test Login Route - Bypasses all routing */}
-          <Route 
-            path="/test-login" 
-            element={<TestLogin onLogin={handleLogin} />} 
           />
 
           {/* Test route to check if styling is working */}

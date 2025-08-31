@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface LoginPageProps {
-  onLogin: (userType: 'admin' | 'customer' | 'super_admin') => void;
+  onLogin: (userType: 'admin' | 'customer') => void;
 }
 
 const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
-  const [userType, setUserType] = useState<'admin' | 'customer' | 'super_admin'>('admin');
+  const [userType, setUserType] = useState<'admin' | 'customer'>('admin');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -49,9 +49,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         case 'customer':
           endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/login';
           break;
-        case 'super_admin':
-          endpoint = 'https://web-production-84a3.up.railway.app/api/super-admin/login';
-          break;
       }
 
       const response = await fetch(endpoint, {
@@ -74,13 +71,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         // Store authentication state
         localStorage.setItem('isAuthenticated', 'true');
         localStorage.setItem('userType', userType);
-        localStorage.setItem('userData', JSON.stringify(data.super_admin || data.user || data.customer));
+        localStorage.setItem('userData', JSON.stringify(data.user || data.customer));
         
         // Redirect immediately
         onLogin(userType);
-        if (userType === 'super_admin') {
-          navigate('/super-admin-dashboard');
-        } else if (userType === 'admin') {
+        if (userType === 'admin') {
           navigate('/dashboard');
         } else {
           navigate('/customer-dashboard');
@@ -101,11 +96,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
     setError('');
     setSuccess('');
 
-    if (userType === 'super_admin') {
-      setError('Super Admin registration is not allowed.');
-      setLoading(false);
-      return;
-    }
+
 
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match.');
@@ -239,8 +230,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           <div className="flex space-x-2 p-1 bg-gray-100 rounded-xl mb-6">
             {[
               { key: 'admin', label: 'Admin', icon: '🏢' },
-              { key: 'customer', label: 'Customer', icon: '👤' },
-              { key: 'super_admin', label: 'Super Admin', icon: '👑' }
+              { key: 'customer', label: 'Customer', icon: '👤' }
             ].map((type) => (
               <button
                 key={type.key}
