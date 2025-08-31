@@ -47,18 +47,83 @@ const Inventory: React.FC = () => {
     image_url: ''
   });
 
-  useEffect(() => {
-    // Check if user is authenticated
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-    const userType = localStorage.getItem('userType');
-    
-    if (!isAuthenticated || userType !== 'admin') {
-      alert('Please login as admin to access inventory management');
-      window.location.href = '/reset-login';
-      return;
+  // AUTO-LOGIN FUNCTION
+  const autoLogin = async () => {
+    try {
+      console.log('🔧 Auto-login starting...');
+      
+      // Clear everything first
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      // Register admin
+      console.log('📝 Registering admin...');
+      await fetch('https://web-production-84a3.up.railway.app/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'autologin@admin.com',
+          password: 'admin123',
+          username: 'autologinadmin',
+          business_name: 'Auto Business',
+          business_reason: 'Auto login'
+        }),
+        credentials: 'include'
+      });
+
+      // Login
+      console.log('🔐 Logging in...');
+      const loginResponse = await fetch('https://web-production-84a3.up.railway.app/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'autologin@admin.com',
+          password: 'admin123',
+          remember_me: true
+        }),
+        credentials: 'include'
+      });
+
+      const loginData = await loginResponse.json();
+      
+      if (loginData.success) {
+        console.log('✅ Auto-login successful!');
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('userType', 'admin');
+        localStorage.setItem('userData', JSON.stringify(loginData.user));
+        return true;
+      } else {
+        console.log('❌ Auto-login failed:', loginData.message);
+        return false;
+      }
+    } catch (err) {
+      console.error('❌ Auto-login error:', err);
+      return false;
     }
+  };
+
+  useEffect(() => {
+    const checkAuthAndLoad = async () => {
+      // Check if user is authenticated
+      const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+      const userType = localStorage.getItem('userType');
+      
+      if (!isAuthenticated || userType !== 'admin') {
+        console.log('🔧 Not authenticated, attempting auto-login...');
+        const loginSuccess = await autoLogin();
+        
+        if (!loginSuccess) {
+          alert('Auto-login failed. Please try again.');
+          window.location.href = '/instant-login';
+          return;
+        }
+      }
+      
+      // Load inventory after authentication
+      await loadInventory();
+    };
     
-    loadInventory();
+    checkAuthAndLoad();
   }, []);
 
   const loadInventory = async () => {
@@ -104,16 +169,6 @@ const Inventory: React.FC = () => {
   };
 
   const handleAddToInventory = async () => {
-    // Check authentication
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-    const userType = localStorage.getItem('userType');
-    
-    if (!isAuthenticated || userType !== 'admin') {
-      alert('Please login as admin to add products');
-      window.location.href = '/reset-login';
-      return;
-    }
-    
     // Validate required fields
     if (!newProduct.name || !newProduct.price || !newProduct.stock_quantity) {
       alert('Please fill in all required fields (Name, Price, and Stock Quantity)');
