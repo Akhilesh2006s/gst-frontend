@@ -569,6 +569,7 @@ class InvoiceItem(db.Model):
 
 # Product routes
 @app.route('/api/products', methods=['GET'])
+@app.route('/api/products/', methods=['GET'])
 def get_products():
     try:
         products = Product.query.filter_by(is_active=True).all()
@@ -661,6 +662,7 @@ def delete_product(product_id):
 
 # Order routes
 @app.route('/api/admin/orders', methods=['GET'])
+@app.route('/api/admin/orders/', methods=['GET'])
 @login_required
 def get_orders():
     try:
@@ -771,6 +773,7 @@ def generate_invoice(order_id):
 
 # Invoice routes
 @app.route('/api/invoices', methods=['GET'])
+@app.route('/api/invoices/', methods=['GET'])
 @login_required
 def get_invoices():
     try:
@@ -801,6 +804,7 @@ def get_invoices():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/customers/invoices', methods=['GET'])
+@app.route('/api/customers/invoices/', methods=['GET'])
 @login_required
 def get_customer_invoices():
     try:
@@ -876,23 +880,6 @@ def get_invoice_pdf(invoice_id):
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-
-# Initialize database and create super admin
-def init_db():
-    with app.app_context():
-        db.create_all()
-        
-        # Create super admin if it doesn't exist
-        super_admin = SuperAdmin.query.filter_by(email='admin@gstbilling.com').first()
-        if not super_admin:
-            super_admin = SuperAdmin(
-                name='Super Admin',
-                email='admin@gstbilling.com'
-            )
-            super_admin.set_password('admin123')
-            db.session.add(super_admin)
-            db.session.commit()
-            print("Super admin created successfully!")
 
 # Initialize database and create super admin
 def init_db():
