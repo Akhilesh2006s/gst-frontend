@@ -1,10 +1,15 @@
 import React from 'react';
 
-const TestLogin: React.FC = () => {
+interface TestLoginProps {
+  onLogin: (type: 'admin' | 'customer' | 'super_admin') => void;
+}
+
+const TestLogin: React.FC<TestLoginProps> = ({ onLogin }) => {
   const handleLogin = () => {
     // Simple login function
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('userType', 'super_admin');
+    onLogin('super_admin'); // Update parent state
     window.location.href = '/super-admin-dashboard';
   };
 
