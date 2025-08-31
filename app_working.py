@@ -20,26 +20,24 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = None
 
-# Enable CORS
-CORS(app, resources={
-    r"/api/*": {
-        "origins": [
-            "http://localhost:3000",
-            "http://localhost:5173", 
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-            "https://web-production-84a3.up.railway.app",
-            "https://gst-frontend-ky783dbqt-akhilesh2006s-projects.vercel.app",
-            "https://gst-frontend-1t78fdlc3-akhilesh2006s-projects.vercel.app",
-            "https://gst-frontend-bay.vercel.app",
-            "https://gst-frontend.vercel.app"
-        ],
-        "supports_credentials": True,
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "Origin", "Accept"],
-        "expose_headers": ["Content-Type", "Authorization"]
-    }
-})
+# Enable CORS with more comprehensive configuration
+CORS(app, 
+     origins=["*"],  # Allow all origins temporarily
+     supports_credentials=True,
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "Origin", "Accept", "X-Requested-With"],
+     expose_headers=["Content-Type", "Authorization"],
+     max_age=86400
+)
+
+# Add CORS headers to all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Origin,Accept,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 # Models
 class SuperAdmin(UserMixin, db.Model):
