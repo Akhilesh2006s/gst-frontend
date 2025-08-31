@@ -54,7 +54,7 @@ const Inventory: React.FC = () => {
   const loadInventory = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/products/inventory', {
+      const response = await fetch('/api/products', {
         credentials: 'include'
       });
       if (response.ok) {
@@ -95,7 +95,7 @@ const Inventory: React.FC = () => {
 
   const handleAddToInventory = async () => {
     try {
-      const response = await fetch('/api/products/inventory/add', {
+      const response = await fetch('/api/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
