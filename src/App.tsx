@@ -23,11 +23,27 @@ const App: React.FC = () => {
 
   const handleLogin = (type: 'admin' | 'customer' | 'super_admin') => {
     setUserType(type);
+    // Store user type in localStorage for persistence
+    localStorage.setItem('userType', type);
   };
 
   const handleLogout = () => {
     setUserType(null);
+    localStorage.removeItem('userType');
+    // Also call logout endpoint to clear server session
+    fetch('https://web-production-84a3.up.railway.app/api/super-admin/logout', {
+      method: 'POST',
+      credentials: 'include'
+    }).catch(() => {}); // Ignore errors
   };
+
+  // Check for stored user type on app load
+  React.useEffect(() => {
+    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | 'super_admin' | null;
+    if (storedUserType) {
+      setUserType(storedUserType);
+    }
+  }, []);
 
   return (
     <Router>
