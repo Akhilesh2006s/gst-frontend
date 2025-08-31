@@ -204,6 +204,19 @@ const Invoices: React.FC = () => {
           </div>
         </div>
 
+        {/* Add Invoice Button */}
+        <div className="mb-6">
+          <button
+            onClick={() => navigate('/invoices/new')}
+            className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 px-6 rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-2"
+          >
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            <span className="text-lg">➕ Add New Invoice</span>
+          </button>
+        </div>
+
         {/* Invoices List */}
         <div className="space-y-4">
           {paginatedInvoices.map((invoice) => (
