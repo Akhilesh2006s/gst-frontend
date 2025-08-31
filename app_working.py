@@ -524,6 +524,36 @@ def delete_product(product_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/products/<int:product_id>/stock', methods=['POST'])
+@login_required
+def update_product_stock(product_id):
+    try:
+        product = Product.query.get_or_404(product_id)
+        data = request.get_json()
+        
+        movement_type = data.get('movement_type')  # 'in' or 'out'
+        quantity = data.get('quantity', 0)
+        
+        if movement_type == 'in':
+            product.stock_quantity += quantity
+        elif movement_type == 'out':
+            if product.stock_quantity >= quantity:
+                product.stock_quantity -= quantity
+            else:
+                return jsonify({'success': False, 'message': 'Insufficient stock'}), 400
+        else:
+            return jsonify({'success': False, 'message': 'Invalid movement type'}), 400
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Stock updated successfully. New quantity: {product.stock_quantity}',
+            'new_quantity': product.stock_quantity
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # Order routes
 @app.route('/api/admin/orders', methods=['GET'])
 @app.route('/api/admin/orders/', methods=['GET'])
