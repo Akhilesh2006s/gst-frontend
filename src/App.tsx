@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './components/auth/LoginPage';
 import Dashboard from './components/Dashboard';
 import SuperAdminDashboard from './components/super-admin/SuperAdminDashboard';
+import AuthCheck from './components/auth/AuthCheck';
 
 // Import existing components
 import Products from './components/products/Products';
@@ -30,6 +31,8 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setUserType(null);
     localStorage.removeItem('userType');
+    localStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('userData');
     // Also call logout endpoint to clear server session
     fetch('https://web-production-84a3.up.railway.app/api/super-admin/logout', {
       method: 'POST',
@@ -39,8 +42,9 @@ const App: React.FC = () => {
 
   // Check for stored user type on app load
   React.useEffect(() => {
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
     const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | 'super_admin' | null;
-    if (storedUserType) {
+    if (isAuthenticated && storedUserType) {
       setUserType(storedUserType);
     }
   }, []);
@@ -216,7 +220,9 @@ const App: React.FC = () => {
             path="/super-admin-dashboard" 
             element={
               userType === 'super_admin' ? (
-                <SuperAdminDashboard />
+                <AuthCheck onAuthFail={() => setUserType(null)}>
+                  <SuperAdminDashboard />
+                </AuthCheck>
               ) : (
                 <Navigate to="/login" />
               )

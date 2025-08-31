@@ -71,6 +71,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
       if (data.success) {
         setSuccess(data.message);
+        // Store authentication state
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('userType', userType);
+        localStorage.setItem('userData', JSON.stringify(data.super_admin || data.user || data.customer));
+        
         setTimeout(() => {
           onLogin(userType);
           if (userType === 'super_admin') {
@@ -117,29 +122,29 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         name: formData.name
       };
 
-      if (userType === 'admin') {
-        endpoint = 'https://web-production-84a3.up.railway.app/api/auth/register';
-        payload = {
-          ...payload,
-          business_name: formData.businessName,
-          business_reason: formData.businessReason,
-          business_phone: formData.phone || '',
-          business_address: formData.billingAddress || '',
-          business_state: formData.state || '',
-          business_pincode: formData.pincode || ''
-        };
-      } else if (userType === 'customer') {
-        endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/register';
-        payload = {
-          ...payload,
-          phone: formData.phone,
-          gstin: formData.gstin,
-          billing_address: formData.billingAddress || '',
-          shipping_address: formData.shippingAddress || '',
-          state: formData.state || '',
-          pincode: formData.pincode || ''
-        };
-      }
+              if (userType === 'admin') {
+          endpoint = 'https://web-production-84a3.up.railway.app/api/auth/register';
+          payload = {
+            ...payload,
+            business_name: formData.businessName,
+            business_reason: formData.businessReason,
+            business_phone: formData.phone || '',
+            business_address: formData.billingAddress || '',
+            business_state: formData.state || '',
+            business_pincode: formData.pincode || ''
+          };
+        } else if (userType === 'customer') {
+          endpoint = 'https://web-production-84a3.up.railway.app/api/customer-auth/register';
+          payload = {
+            ...payload,
+            phone: formData.phone,
+            gstin: formData.gstin,
+            billing_address: formData.billingAddress || '',
+            shipping_address: formData.shippingAddress || '',
+            state: formData.state || '',
+            pincode: formData.pincode || ''
+          };
+        }
 
       const response = await fetch(endpoint, {
         method: 'POST',
