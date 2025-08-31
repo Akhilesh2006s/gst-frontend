@@ -56,11 +56,7 @@ const SuperAdminDashboard: React.FC = () => {
       }
       
       const response = await fetch('https://web-production-84a3.up.railway.app/api/super-admin/dashboard', {
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Type': 'super_admin'
-        }
+        credentials: 'include'
       });
       
       if (!response.ok) {
