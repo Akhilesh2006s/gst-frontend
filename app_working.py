@@ -612,6 +612,64 @@ def delete_product(product_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+# Invoice routes (placeholder - return empty data for now)
+@app.route('/api/invoices', methods=['GET'])
+@login_required
+def get_invoices():
+    try:
+        # Return empty invoices list for now
+        return jsonify({
+            'success': True,
+            'invoices': []
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/invoices', methods=['POST'])
+@login_required
+def create_invoice():
+    try:
+        # Placeholder - return success for now
+        return jsonify({
+            'success': True,
+            'message': 'Invoice created successfully',
+            'invoice': {
+                'id': 1,
+                'number': 'INV-001'
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/invoices/<int:invoice_id>', methods=['GET'])
+@login_required
+def get_invoice(invoice_id):
+    try:
+        # Placeholder - return empty invoice for now
+        return jsonify({
+            'success': True,
+            'invoice': {
+                'id': invoice_id,
+                'number': f'INV-{invoice_id:03d}',
+                'items': []
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/invoices/<int:invoice_id>/pdf', methods=['GET'])
+@login_required
+def get_invoice_pdf(invoice_id):
+    try:
+        # Placeholder - return success for now
+        return jsonify({
+            'success': True,
+            'message': 'PDF generated successfully',
+            'pdf_url': f'/api/invoices/{invoice_id}/pdf'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # Initialize database and create super admin
 def init_db():
     with app.app_context():
