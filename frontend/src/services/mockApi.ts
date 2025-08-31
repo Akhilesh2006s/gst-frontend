@@ -1,4 +1,4 @@
-import { User, Customer, Product, InvoiceItem, Invoice, StockMovement, GSTReport, DashboardStats, SalesChartData, LoginForm, RegisterForm, CustomerForm, ProductForm, InvoiceForm } from '../types';
+import { User, Customer, Product, Invoice, GSTReport, DashboardStats, SalesChartData, LoginForm, RegisterForm, CustomerForm, ProductForm, InvoiceForm } from '../types';
 
 // Mock data - Empty for user to add their own products
 const mockProducts: Product[] = [];
@@ -15,7 +15,7 @@ class MockApiService {
   }
 
   // Authentication methods
-  async login(credentials: LoginForm): Promise<{ user: User; token: string }> {
+  async login(_credentials: LoginForm): Promise<{ user: User; token: string }> {
     await this.delay();
     return {
       user: {
@@ -38,7 +38,7 @@ class MockApiService {
 
   async register(userData: RegisterForm): Promise<{ user: User; token: string }> {
     await this.delay();
-    return this.login({ username: userData.username, password: userData.password });
+    return this.login({ username: userData.username, password: userData.password, remember_me: false });
   }
 
   async logout(): Promise<void> {
@@ -81,7 +81,12 @@ class MockApiService {
     await this.delay();
     return {
       labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-      data: [65000, 59000, 80000, 81000, 56000, 125000]
+      datasets: [{
+        label: 'Sales',
+        data: [65000, 59000, 80000, 81000, 56000, 125000],
+        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+        borderColor: 'rgba(54, 162, 235, 1)'
+      }]
     };
   }
 
@@ -91,22 +96,22 @@ class MockApiService {
     return [];
   }
 
-  async getCustomer(id: number): Promise<Customer> {
+  async getCustomer(_id: number): Promise<Customer> {
     await this.delay();
     throw new Error('Customer not found');
   }
 
-  async createCustomer(customerData: CustomerForm): Promise<Customer> {
+  async createCustomer(_customerData: CustomerForm): Promise<Customer> {
     await this.delay();
     throw new Error('Not implemented');
   }
 
-  async updateCustomer(id: number, customerData: CustomerForm): Promise<Customer> {
+  async updateCustomer(_id: number, _customerData: CustomerForm): Promise<Customer> {
     await this.delay();
     throw new Error('Not implemented');
   }
 
-  async deleteCustomer(id: number): Promise<void> {
+  async deleteCustomer(_id: number): Promise<void> {
     await this.delay();
     throw new Error('Not implemented');
   }
@@ -290,12 +295,12 @@ class MockApiService {
       customer_name: invoiceData.customer_name,
       customer_address: invoiceData.customer_address,
       customer_phone: invoiceData.customer_phone,
-      subtotal: invoiceData.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0),
-      total_amount: invoiceData.total_amount || 0,
+      subtotal: invoiceData.items.reduce((sum: number, item: any) => sum + (item.quantity * item.unit_price), 0),
+      total_amount: invoiceData.items.reduce((sum: number, item: any) => sum + (item.quantity * item.unit_price), 0),
              notes: invoiceData.notes,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      items: invoiceData.items.map(item => ({
+      items: invoiceData.items.map((item: any) => ({
         id: Date.now() + Math.random(),
         invoice_id: Date.now(),
         product_id: item.product_id,
@@ -315,7 +320,7 @@ class MockApiService {
     };
   }
 
-  async updateInvoice(id: number, invoiceData: InvoiceForm): Promise<{ success: boolean; message: string }> {
+  async updateInvoice(_id: number, _invoiceData: InvoiceForm): Promise<{ success: boolean; message: string }> {
     await this.delay();
     return {
       success: true,

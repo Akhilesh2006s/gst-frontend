@@ -1,4 +1,4 @@
-import { User, Customer, Product, InvoiceItem, Invoice, StockMovement, GSTReport, DashboardStats, SalesChartData, LoginForm, RegisterForm, CustomerForm, ProductForm, InvoiceForm } from '../types';
+import { User, Customer, Product, GSTReport, DashboardStats, SalesChartData, LoginForm, RegisterForm, CustomerForm, ProductForm } from '../types';
 
 class ApiService {
   private baseUrl = '/api';

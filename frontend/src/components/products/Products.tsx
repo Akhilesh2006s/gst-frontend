@@ -15,10 +15,10 @@ const Products: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [_selectedCategory, _setSelectedCategory] = useState('');
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [inventoryAction, setInventoryAction] = useState<'add' | 'remove'>('add');
+  const [inventoryAction, _setInventoryAction] = useState<'add' | 'remove'>('add');
   const [inventoryQuantity, setInventoryQuantity] = useState(1);
 
   // Load products from API
@@ -61,12 +61,12 @@ const Products: React.FC = () => {
   
   console.log('Filtered products:', filteredProducts);
 
-  const handleInventoryAction = (product: Product, action: 'add' | 'remove') => {
-    setSelectedProduct(product);
-    setInventoryAction(action);
-    setInventoryQuantity(1);
-    setShowInventoryModal(true);
-  };
+  // const _handleInventoryAction = (product: Product, action: 'add' | 'remove') => {
+  //   setSelectedProduct(product);
+  //   setInventoryAction(action);
+  //   setInventoryQuantity(1);
+  //   setShowInventoryModal(true);
+  // };
 
   const handleInventorySubmit = async () => {
     if (!selectedProduct) return;

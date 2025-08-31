@@ -87,7 +87,7 @@ const Orders: React.FC = () => {
       });
 
       if (response.ok) {
-        const data = await response.json();
+        await response.json();
         alert('Invoice generated successfully!');
         loadOrders(); // Reload orders to show updated status
       } else {

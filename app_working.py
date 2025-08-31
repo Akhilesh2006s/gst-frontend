@@ -1,0 +1,451 @@
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+import os
+from datetime import datetime
+
+# Create Flask app
+app = Flask(__name__)
+
+# Configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize extensions
+db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = None
+
+# Enable CORS
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["*"],
+        "supports_credentials": True,
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+# Models
+class SuperAdmin(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    business_name = db.Column(db.String(200), nullable=True)
+    business_reason = db.Column(db.Text, nullable=True)
+    is_approved = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class Customer(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    phone = db.Column(db.String(20), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    password_hash = db.Column(db.String(200), nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class Product(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    price = db.Column(db.Float, nullable=False)
+    gst_rate = db.Column(db.Float, default=18.0)
+    stock_quantity = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+# User loader
+@login_manager.user_loader
+def load_user(user_id):
+    # Try to load super admin first, then admin user, then customer
+    super_admin = SuperAdmin.query.get(int(user_id))
+    if super_admin:
+        return super_admin
+    
+    user = User.query.get(int(user_id))
+    if user:
+        return user
+    
+    customer = Customer.query.get(int(user_id))
+    return customer
+
+# Routes
+@app.route('/health')
+def health():
+    return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+
+@app.route('/')
+def root():
+    return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+
+@app.route('/api/test')
+def test_api():
+    return jsonify({'message': 'API is working!'})
+
+# Auth routes
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        username = data.get('username')
+        business_name = data.get('business_name')
+        business_reason = data.get('business_reason')
+        
+        # Check if user already exists
+        if User.query.filter_by(email=email).first():
+            return jsonify({'success': False, 'message': 'Email already registered'}), 400
+        
+        # Create new user
+        user = User(
+            email=email,
+            username=username,
+            business_name=business_name,
+            business_reason=business_reason,
+            is_approved=False
+        )
+        user.set_password(password)
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Registration successful! Please wait for admin approval.'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password) and user.is_approved:
+            login_user(user, remember=data.get('remember_me', False))
+            return jsonify({
+                'success': True,
+                'message': 'Login successful!',
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'business_name': user.business_name
+                }
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Invalid credentials or account not approved'}), 401
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/auth/logout')
+@login_required
+def auth_logout():
+    logout_user()
+    return jsonify({'success': True, 'message': 'Logout successful'})
+
+@app.route('/api/auth/check')
+def auth_check():
+    if current_user.is_authenticated:
+        if hasattr(current_user, 'is_super_admin'):
+            return jsonify({
+                'authenticated': True,
+                'user_type': 'super_admin',
+                'user': {
+                    'id': current_user.id,
+                    'name': current_user.name,
+                    'email': current_user.email
+                }
+            })
+        elif hasattr(current_user, 'business_name'):
+            return jsonify({
+                'authenticated': True,
+                'user_type': 'admin',
+                'user': {
+                    'id': current_user.id,
+                    'username': current_user.username,
+                    'email': current_user.email
+                }
+            })
+        else:
+            return jsonify({
+                'authenticated': True,
+                'user_type': 'customer',
+                'user': {
+                    'id': current_user.id,
+                    'name': current_user.name,
+                    'email': current_user.email
+                }
+            })
+    return jsonify({'authenticated': False}), 401
+
+# Super Admin routes
+@app.route('/api/super-admin/login', methods=['POST'])
+def super_admin_login():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        super_admin = SuperAdmin.query.filter_by(email=email).first()
+        if super_admin and super_admin.check_password(password):
+            login_user(super_admin, remember=data.get('remember_me', False))
+            return jsonify({
+                'success': True,
+                'message': 'Login successful!',
+                'super_admin': {
+                    'id': super_admin.id,
+                    'name': super_admin.name,
+                    'email': super_admin.email
+                }
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/super-admin/logout')
+@login_required
+def super_admin_logout():
+    logout_user()
+    return jsonify({'success': True, 'message': 'Logout successful'})
+
+@app.route('/api/super-admin/dashboard')
+@login_required
+def super_admin_dashboard():
+    try:
+        # Get pending admin registrations
+        pending_admins = User.query.filter_by(is_approved=False, is_active=True).all()
+        
+        # Get approved admins
+        approved_admins = User.query.filter_by(is_approved=True, is_active=True).all()
+        
+        # Get total customers
+        total_customers = Customer.query.filter_by(is_active=True).count()
+        
+        # Get total products
+        total_products = Product.query.filter_by(is_active=True).count()
+        
+        pending_list = []
+        for admin in pending_admins:
+            pending_list.append({
+                'id': admin.id,
+                'username': admin.username or '',
+                'email': admin.email or '',
+                'business_name': admin.business_name or '',
+                'business_reason': admin.business_reason or '',
+                'created_at': admin.created_at.isoformat()
+            })
+        
+        approved_list = []
+        for admin in approved_admins:
+            approved_list.append({
+                'id': admin.id,
+                'username': admin.username or '',
+                'email': admin.email or '',
+                'business_name': admin.business_name or '',
+                'approved_at': admin.approved_at.isoformat() if admin.approved_at else admin.created_at.isoformat()
+            })
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'pending_admins': len(pending_list),
+                'approved_admins': len(approved_list),
+                'total_customers': total_customers,
+                'total_products': total_products
+            },
+            'pending_admins': pending_list,
+            'approved_admins': approved_list
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/super-admin/approve-admin/<int:admin_id>', methods=['POST'])
+@login_required
+def approve_admin(admin_id):
+    try:
+        admin = User.query.get(admin_id)
+        if not admin:
+            return jsonify({'success': False, 'message': 'Admin not found'}), 404
+        
+        admin.is_approved = True
+        admin.approved_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Admin {admin.email} approved successfully!'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/super-admin/reject-admin/<int:admin_id>', methods=['POST'])
+@login_required
+def reject_admin(admin_id):
+    try:
+        admin = User.query.get(admin_id)
+        if not admin:
+            return jsonify({'success': False, 'message': 'Admin not found'}), 404
+        
+        admin.is_active = False
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Admin {admin.email} rejected successfully!'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Customer routes
+@app.route('/api/customer-auth/register', methods=['POST'])
+def customer_register():
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password')
+        phone = data.get('phone')
+        address = data.get('address')
+        
+        # Check if customer already exists
+        if Customer.query.filter_by(email=email).first():
+            return jsonify({'success': False, 'message': 'Email already registered'}), 400
+        
+        # Create new customer
+        customer = Customer(
+            name=name,
+            email=email,
+            phone=phone,
+            address=address
+        )
+        customer.set_password(password)
+        
+        db.session.add(customer)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Registration successful!'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/customer-auth/login', methods=['POST'])
+def customer_login():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        customer = Customer.query.filter_by(email=email).first()
+        if customer and customer.check_password(password):
+            login_user(customer, remember=data.get('remember_me', False))
+            return jsonify({
+                'success': True,
+                'message': 'Login successful!',
+                'customer': {
+                    'id': customer.id,
+                    'name': customer.name,
+                    'email': customer.email
+                }
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/customer-auth/logout')
+@login_required
+def customer_logout():
+    logout_user()
+    return jsonify({'success': True, 'message': 'Logout successful'})
+
+# Product routes
+@app.route('/api/products', methods=['GET'])
+def get_products():
+    try:
+        products = Product.query.filter_by(is_active=True).all()
+        return jsonify({
+            'success': True,
+            'products': [{
+                'id': p.id,
+                'name': p.name,
+                'description': p.description,
+                'price': p.price,
+                'gst_rate': p.gst_rate,
+                'stock_quantity': p.stock_quantity
+            } for p in products]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Initialize database and create super admin
+def init_db():
+    with app.app_context():
+        db.create_all()
+        
+        # Create super admin if it doesn't exist
+        super_admin = SuperAdmin.query.filter_by(email='admin@gstbilling.com').first()
+        if not super_admin:
+            super_admin = SuperAdmin(
+                name='Super Admin',
+                email='admin@gstbilling.com'
+            )
+            super_admin.set_password('admin123')
+            db.session.add(super_admin)
+            db.session.commit()
+            print("Super admin created successfully!")
+
+if __name__ == '__main__':
+    init_db()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)

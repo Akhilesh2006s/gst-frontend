@@ -7,9 +7,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://web-production-84a3.up.railway.app',
+        target: process.env.NODE_ENV === 'production' 
+          ? 'https://web-production-84a3.up.railway.app'
+          : 'http://localhost:5000',
         changeOrigin: true,
-        secure: true,
+        secure: process.env.NODE_ENV === 'production',
       }
     }
   }
