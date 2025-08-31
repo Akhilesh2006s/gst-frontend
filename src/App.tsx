@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
+import SimpleLogin from './components/auth/SimpleLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -76,7 +77,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <LoginPage onLogin={handleLogin} />
+                <SimpleLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -228,6 +229,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Simple Login Route */}
+          <Route 
+            path="/simple-login" 
+            element={<SimpleLogin />} 
           />
 
           {/* Test route to check if styling is working */}
