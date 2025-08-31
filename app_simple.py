@@ -57,6 +57,17 @@ customers = [
         'pincode': '110001',
         'created_at': datetime.utcnow().isoformat(),
         'is_active': True
+    },
+    {
+        'id': 3,
+        'name': 'Alice Johnson',
+        'email': 'alice.johnson@example.com',
+        'phone': '+91 7654321098',
+        'billing_address': '789 Pine Road, Bangalore, Karnataka',
+        'state': 'Karnataka',
+        'pincode': '560001',
+        'created_at': datetime.utcnow().isoformat(),
+        'is_active': True
     }
 ]
 orders = [
@@ -112,6 +123,20 @@ invoices = [
         'total_amount': 200.0,
         'gst_amount': 36.0,
         'status': 'paid',
+        'created_at': datetime.utcnow().isoformat()
+    },
+    {
+        'id': 3,
+        'invoice_number': 'INV-0003',
+        'customer_id': 3,
+        'customer_name': 'Alice Johnson',
+        'customer_email': 'alice.johnson@example.com',
+        'order_id': 3,
+        'products': [],
+        'items': [],
+        'total_amount': 200.0,
+        'gst_amount': 36.0,
+        'status': 'pending',
         'created_at': datetime.utcnow().isoformat()
     }
 ]
