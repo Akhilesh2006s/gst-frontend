@@ -6,6 +6,7 @@ import ForceLogin from './components/auth/ForceLogin';
 import DirectLogin from './components/auth/DirectLogin';
 import ResetLogin from './components/auth/ResetLogin';
 import FinalLogin from './components/auth/FinalLogin';
+import QuickLogin from './components/auth/QuickLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -102,7 +103,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <FinalLogin />
+                <QuickLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -254,6 +255,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Quick Login Route - One-click solution */}
+          <Route 
+            path="/quick-login" 
+            element={<QuickLogin />} 
           />
 
           {/* Final Login Route - Complete solution */}
