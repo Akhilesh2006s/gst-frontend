@@ -252,6 +252,12 @@ const App: React.FC = () => {
             element={<SimpleLogin />} 
           />
 
+          {/* Test Login Route - Bypasses all routing */}
+          <Route 
+            path="/test-login" 
+            element={<SimpleLogin />} 
+          />
+
           {/* Test route to check if styling is working */}
           <Route 
             path="/test" 

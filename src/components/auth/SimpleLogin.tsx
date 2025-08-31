@@ -29,18 +29,18 @@ const SimpleLogin: React.FC = () => {
 
       const data = await response.json();
 
-             if (data.success) {
-         setSuccess('Login successful! Redirecting...');
-         // Store authentication state
-         localStorage.setItem('isAuthenticated', 'true');
-         localStorage.setItem('userType', 'super_admin');
-         localStorage.setItem('userData', JSON.stringify(data.super_admin));
-         
-         // Force a page reload to ensure clean state
-         setTimeout(() => {
-           window.location.href = '/super-admin-dashboard';
-         }, 1000);
-       } else {
+      if (data.success) {
+        setSuccess('Login successful! Redirecting...');
+        // Store authentication state
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('userType', 'super_admin');
+        localStorage.setItem('userData', JSON.stringify(data.super_admin));
+        
+        // Force a page reload to ensure clean state
+        setTimeout(() => {
+          window.location.href = '/super-admin-dashboard';
+        }, 1000);
+      } else {
         setError(data.message || 'Login failed');
       }
     } catch (err) {
@@ -51,50 +51,96 @@ const SimpleLogin: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
-      <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">🔐 Login</h1>
-          <p className="text-gray-300">Super Admin Access</p>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #1e293b 0%, #7c3aed 50%, #1e293b 100%)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px'
+    }}>
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.1)',
+        backdropFilter: 'blur(10px)',
+        borderRadius: '24px',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        border: '1px solid rgba(255, 255, 255, 0.2)',
+        padding: '32px',
+        width: '100%',
+        maxWidth: '400px'
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <h1 style={{ fontSize: '36px', fontWeight: 'bold', color: 'white', marginBottom: '8px' }}>🔐 Login</h1>
+          <p style={{ color: '#d1d5db', fontSize: '18px' }}>Super Admin Access</p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <div>
-            <label className="block text-white text-sm font-medium mb-2">
+            <label style={{ display: 'block', color: 'white', fontSize: '14px', fontWeight: '500', marginBottom: '8px' }}>
               Email
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '16px',
+                color: 'white',
+                fontSize: '16px',
+                outline: 'none'
+              }}
               placeholder="Enter your email"
               required
             />
           </div>
 
           <div>
-            <label className="block text-white text-sm font-medium mb-2">
+            <label style={{ display: 'block', color: 'white', fontSize: '14px', fontWeight: '500', marginBottom: '8px' }}>
               Password
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '16px',
+                color: 'white',
+                fontSize: '16px',
+                outline: 'none'
+              }}
               placeholder="Enter your password"
               required
             />
           </div>
 
           {error && (
-            <div className="bg-red-500/20 border border-red-500/30 text-red-300 px-4 py-3 rounded-2xl">
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.2)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#fca5a5',
+              padding: '12px 16px',
+              borderRadius: '16px'
+            }}>
               {error}
             </div>
           )}
 
           {success && (
-            <div className="bg-green-500/20 border border-green-500/30 text-green-300 px-4 py-3 rounded-2xl">
+            <div style={{
+              background: 'rgba(34, 197, 94, 0.2)',
+              border: '1px solid rgba(34, 197, 94, 0.3)',
+              color: '#86efac',
+              padding: '12px 16px',
+              borderRadius: '16px'
+            }}>
               {success}
             </div>
           )}
@@ -102,7 +148,19 @@ const SimpleLogin: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 rounded-2xl font-semibold hover:from-blue-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              width: '100%',
+              background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
+              color: 'white',
+              padding: '12px 24px',
+              borderRadius: '16px',
+              fontSize: '16px',
+              fontWeight: '600',
+              border: 'none',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.5 : 1,
+              transition: 'all 0.3s ease'
+            }}
           >
             {loading ? 'Logging in...' : 'Login'}
           </button>
