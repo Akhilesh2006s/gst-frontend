@@ -163,7 +163,10 @@ def create_customer_order():
         data = request.get_json()
         order = {
             'id': len(orders) + 1,
+            'order_number': f'ORD-{len(orders) + 1:04d}',
             'customer_id': data.get('customer_id'),
+            'customer_name': data.get('customer_name', 'Unknown Customer'),
+            'customer_email': data.get('customer_email', 'unknown@example.com'),
             'products': data.get('products', []),
             'total_amount': data.get('total_amount', 0),
             'status': 'pending',
@@ -194,7 +197,10 @@ def create_customer_invoice():
         data = request.get_json()
         invoice = {
             'id': len(invoices) + 1,
+            'invoice_number': f'INV-{len(invoices) + 1:04d}',
             'customer_id': data.get('customer_id'),
+            'customer_name': data.get('customer_name', 'Unknown Customer'),
+            'customer_email': data.get('customer_email', 'unknown@example.com'),
             'order_id': data.get('order_id'),
             'products': data.get('products', []),
             'total_amount': data.get('total_amount', 0),
@@ -274,7 +280,10 @@ def create_invoice():
         data = request.get_json()
         invoice = {
             'id': len(invoices) + 1,
+            'invoice_number': f'INV-{len(invoices) + 1:04d}',
             'customer_id': data.get('customer_id'),
+            'customer_name': data.get('customer_name', 'Unknown Customer'),
+            'customer_email': data.get('customer_email', 'unknown@example.com'),
             'order_id': data.get('order_id'),
             'products': data.get('products', []),
             'total_amount': data.get('total_amount', 0),
