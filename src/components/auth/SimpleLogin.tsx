@@ -1,6 +1,10 @@
 import React from 'react';
 
-const SimpleLogin: React.FC = () => {
+interface SimpleLoginProps {
+  onLogin?: (type: 'admin' | 'customer') => void;
+}
+
+const SimpleLogin: React.FC<SimpleLoginProps> = ({ onLogin }) => {
   const handleLogin = async () => {
     try {
       // Register a new admin first
@@ -38,16 +42,21 @@ const SimpleLogin: React.FC = () => {
       const data = await loginResponse.json();
       console.log('Login response:', data);
 
-      if (data.success) {
-        localStorage.setItem('isAuthenticated', 'true');
-        localStorage.setItem('userType', 'admin');
-        localStorage.setItem('userData', JSON.stringify(data.user));
-        
-        // Redirect to dashboard
-        window.location.href = '/dashboard';
-      } else {
-        alert('Login failed: ' + data.message);
-      }
+              if (data.success) {
+          localStorage.setItem('isAuthenticated', 'true');
+          localStorage.setItem('userType', 'admin');
+          localStorage.setItem('userData', JSON.stringify(data.user));
+          
+          // Update parent state if onLogin prop is provided
+          if (onLogin) {
+            onLogin('admin');
+          }
+          
+          // Redirect to dashboard
+          window.location.href = '/dashboard';
+        } else {
+          alert('Login failed: ' + data.message);
+        }
     } catch (err) {
       alert('Login error: ' + err);
     }

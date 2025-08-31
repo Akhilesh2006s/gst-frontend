@@ -77,7 +77,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <SimpleLogin />
+                <SimpleLogin onLogin={handleLogin} />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -234,7 +234,7 @@ const App: React.FC = () => {
           {/* Simple Login Route */}
           <Route 
             path="/simple-login" 
-            element={<SimpleLogin />} 
+            element={<SimpleLogin onLogin={handleLogin} />} 
           />
 
           {/* Test route to check if styling is working */}
