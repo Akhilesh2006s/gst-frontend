@@ -101,7 +101,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <ResetLogin />
+                <DirectLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :

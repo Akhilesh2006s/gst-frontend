@@ -9,6 +9,10 @@ const DirectLogin: React.FC = () => {
     setMessage('Logging in...');
 
     try {
+      // Clear any existing data first
+      localStorage.clear();
+      sessionStorage.clear();
+      
       // Step 1: Register a new admin
       setMessage('Registering admin account...');
       const registerResponse = await fetch('https://web-production-84a3.up.railway.app/api/auth/register', {

@@ -13,7 +13,7 @@ const ResetLogin: React.FC = () => {
     }).catch(() => {}); // Ignore errors
     
     // Force a complete page reload to clear everything
-    window.location.href = '/login';
+    window.location.href = '/direct-login';
   }, []);
 
   return (
