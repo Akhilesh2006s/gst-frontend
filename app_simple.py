@@ -19,6 +19,7 @@ CORS(app,
 # Simple in-memory storage for demo
 products = []
 customers = []
+orders = []
 
 @app.route('/health')
 def health():
@@ -142,6 +143,37 @@ def create_customer():
             'success': True,
             'message': 'Customer created successfully',
             'customer': customer
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Customer order routes
+@app.route('/api/customers/orders', methods=['GET'])
+def get_customer_orders():
+    # Return empty orders list for now
+    return jsonify({
+        'success': True,
+        'orders': []
+    })
+
+@app.route('/api/customers/orders', methods=['POST'])
+def create_customer_order():
+    try:
+        data = request.get_json()
+        order = {
+            'id': len(orders) + 1,
+            'customer_id': data.get('customer_id'),
+            'products': data.get('products', []),
+            'total_amount': data.get('total_amount', 0),
+            'status': 'pending',
+            'created_at': datetime.utcnow().isoformat()
+        }
+        orders.append(order)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Order created successfully',
+            'order': order
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
