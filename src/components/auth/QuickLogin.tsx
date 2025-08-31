@@ -13,23 +13,23 @@ const QuickLogin: React.FC = () => {
       localStorage.clear();
       sessionStorage.clear();
       
-      // Register and login in one go
-      setMessage('Registering and logging in...');
-      
-      const registerResponse = await fetch('https://web-production-84a3.up.railway.app/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: 'quickadmin@test.com',
-          password: 'admin123',
-          username: 'quickadmin',
-          business_name: 'Quick Business',
-          business_reason: 'Quick testing'
-        }),
-        credentials: 'include'
-      });
+             // Register and login in one go
+       setMessage('Registering and logging in...');
+       
+       await fetch('https://web-production-84a3.up.railway.app/api/auth/register', {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           email: 'quickadmin@test.com',
+           password: 'admin123',
+           username: 'quickadmin',
+           business_name: 'Quick Business',
+           business_reason: 'Quick testing'
+         }),
+         credentials: 'include'
+       });
 
       const loginResponse = await fetch('https://web-production-84a3.up.railway.app/api/auth/login', {
         method: 'POST',
