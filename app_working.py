@@ -93,7 +93,21 @@ def load_user(user_id):
 # Routes
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        return jsonify({
+            'status': 'healthy', 
+            'message': 'GST Billing System API is running',
+            'database': 'connected',
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'message': 'Database connection failed',
+            'error': str(e)
+        }), 500
 
 @app.route('/')
 def root():
@@ -826,14 +840,22 @@ def get_invoice_pdf(invoice_id):
 
 # Initialize database
 def init_db():
-    with app.app_context():
-        # Drop and recreate all tables to handle schema changes
-        db.drop_all()
-        db.create_all()
-        print("Database initialized successfully!")
+    try:
+        with app.app_context():
+            # Drop and recreate all tables to handle schema changes
+            db.drop_all()
+            db.create_all()
+            print("Database initialized successfully!")
+            return True
+    except Exception as e:
+        print(f"Database initialization failed: {e}")
+        return False
 
 # Initialize database when app starts
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"Failed to initialize database: {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
