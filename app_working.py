@@ -892,6 +892,8 @@ def get_invoice_pdf(invoice_id):
 # Initialize database and create super admin
 def init_db():
     with app.app_context():
+        # Drop and recreate all tables to handle schema changes
+        db.drop_all()
         db.create_all()
         
         # Create super admin if it doesn't exist
@@ -905,6 +907,7 @@ def init_db():
             db.session.add(super_admin)
             db.session.commit()
             print("Super admin created successfully!")
+        print("Database initialized successfully!")
 
 # Initialize database when app starts
 init_db()
