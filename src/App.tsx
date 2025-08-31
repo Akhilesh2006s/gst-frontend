@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './components/auth/LoginPage';
 import SimpleLogin from './components/auth/SimpleLogin';
 import ForceLogin from './components/auth/ForceLogin';
+import DirectLogin from './components/auth/DirectLogin';
 import Dashboard from './components/Dashboard';
 
 // Import existing components
@@ -99,7 +100,7 @@ const App: React.FC = () => {
             path="/login" 
             element={
               !userType ? (
-                <SimpleLogin onLogin={handleLogin} />
+                <DirectLogin />
               ) : (
                 <Navigate to={
                   userType === 'customer' ? '/customer-dashboard' :
@@ -251,6 +252,12 @@ const App: React.FC = () => {
                 <Navigate to="/login" />
               )
             } 
+          />
+
+          {/* Direct Login Route - One-click solution */}
+          <Route 
+            path="/direct-login" 
+            element={<DirectLogin />} 
           />
 
           {/* Force Login Route - Clears session and redirects */}
