@@ -520,6 +520,53 @@ def delete_customer(customer_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+# Order and Invoice models
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    total_amount = db.Column(db.Float, nullable=False)
+    status = db.Column(db.String(50), default='pending')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    customer = db.relationship('Customer', backref='orders', lazy=True)
+    admin = db.relationship('User', backref='orders', lazy=True)
+    items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
+
+class OrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    
+    product = db.relationship('Product', backref='order_items', lazy=True)
+
+class Invoice(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_number = db.Column(db.String(50), unique=True, nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    total_amount = db.Column(db.Float, nullable=False)
+    gst_amount = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    customer = db.relationship('Customer', backref='invoices', lazy=True)
+    admin = db.relationship('User', backref='invoices', lazy=True)
+    order = db.relationship('Order', backref='invoices', lazy=True)
+    items = db.relationship('InvoiceItem', backref='invoice', lazy=True, cascade='all, delete-orphan')
+
+class InvoiceItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoice.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    gst_rate = db.Column(db.Float, nullable=False)
+    
+    product = db.relationship('Product', backref='invoice_items', lazy=True)
+
 # Product routes
 @app.route('/api/products', methods=['GET'])
 def get_products():
@@ -612,31 +659,167 @@ def delete_product(product_id):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# Invoice routes (placeholder - return empty data for now)
-@app.route('/api/invoices', methods=['GET'])
+# Order routes
+@app.route('/api/admin/orders', methods=['GET'])
 @login_required
-def get_invoices():
+def get_orders():
     try:
-        # Return empty invoices list for now
+        # Get orders for the current admin
+        orders = Order.query.filter_by(admin_id=current_user.id).all()
+        
+        orders_data = []
+        for order in orders:
+            try:
+                customer_name = order.customer.name if order.customer else 'Unknown'
+            except:
+                customer_name = 'Unknown'
+            
+            orders_data.append({
+                'id': order.id,
+                'customer_name': customer_name,
+                'total_amount': order.total_amount,
+                'status': order.status,
+                'created_at': order.created_at.isoformat(),
+                'items_count': len(order.items)
+            })
+        
         return jsonify({
             'success': True,
-            'invoices': []
+            'orders': orders_data
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/invoices', methods=['POST'])
+@app.route('/api/admin/orders/<int:order_id>/status', methods=['PUT'])
 @login_required
-def create_invoice():
+def update_order_status(order_id):
     try:
-        # Placeholder - return success for now
+        order = Order.query.get_or_404(order_id)
+        data = request.get_json()
+        new_status = data.get('status')
+        
+        if new_status in ['pending', 'processing', 'completed', 'cancelled']:
+            order.status = new_status
+            db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Order status updated to {new_status}'
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Invalid status'}), 400
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/admin/orders/<int:order_id>/generate-invoice', methods=['POST'])
+@login_required
+def generate_invoice(order_id):
+    try:
+        order = Order.query.get_or_404(order_id)
+        
+        # Check if invoice already exists for this order
+        existing_invoice = Invoice.query.filter_by(order_id=order_id).first()
+        if existing_invoice:
+            return jsonify({'success': False, 'message': 'Invoice already exists for this order'}), 400
+        
+        # Generate invoice number
+        invoice_count = Invoice.query.count()
+        invoice_number = f'INV-{invoice_count + 1:03d}-{order_id}'
+        
+        # Calculate GST
+        gst_rate = 18.0  # Default GST rate
+        gst_amount = order.total_amount * (gst_rate / 100)
+        
+        # Create invoice
+        invoice = Invoice(
+            invoice_number=invoice_number,
+            order_id=order_id,
+            customer_id=order.customer_id,
+            admin_id=order.admin_id,
+            total_amount=order.total_amount,
+            gst_amount=gst_amount
+        )
+        
+        db.session.add(invoice)
+        
+        # Create invoice items from order items
+        for item in order.items:
+            invoice_item = InvoiceItem(
+                invoice_id=invoice.id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                price=item.price,
+                gst_rate=gst_rate
+            )
+            db.session.add(invoice_item)
+        
+        db.session.commit()
+        
         return jsonify({
             'success': True,
-            'message': 'Invoice created successfully',
+            'message': 'Invoice generated successfully',
             'invoice': {
-                'id': 1,
-                'number': 'INV-001'
+                'id': invoice.id,
+                'number': invoice.invoice_number,
+                'total_amount': invoice.total_amount
             }
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Invoice routes
+@app.route('/api/invoices', methods=['GET'])
+@login_required
+def get_invoices():
+    try:
+        # Get invoices for the current admin
+        invoices = Invoice.query.filter_by(admin_id=current_user.id).all()
+        
+        invoices_data = []
+        for invoice in invoices:
+            try:
+                customer_name = invoice.customer.name if invoice.customer else 'Unknown'
+            except:
+                customer_name = 'Unknown'
+            
+            invoices_data.append({
+                'id': invoice.id,
+                'invoice_number': invoice.invoice_number,
+                'customer_name': customer_name,
+                'total_amount': invoice.total_amount,
+                'gst_amount': invoice.gst_amount,
+                'created_at': invoice.created_at.isoformat()
+            })
+        
+        return jsonify({
+            'success': True,
+            'invoices': invoices_data
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/customers/invoices', methods=['GET'])
+@login_required
+def get_customer_invoices():
+    try:
+        # Get invoices for the current customer
+        invoices = Invoice.query.filter_by(customer_id=current_user.id).all()
+        
+        invoices_data = []
+        for invoice in invoices:
+            invoices_data.append({
+                'id': invoice.id,
+                'invoice_number': invoice.invoice_number,
+                'total_amount': invoice.total_amount,
+                'gst_amount': invoice.gst_amount,
+                'created_at': invoice.created_at.isoformat()
+            })
+        
+        return jsonify({
+            'success': True,
+            'invoices': invoices_data
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -645,14 +828,38 @@ def create_invoice():
 @login_required
 def get_invoice(invoice_id):
     try:
-        # Placeholder - return empty invoice for now
+        invoice = Invoice.query.get_or_404(invoice_id)
+        
+        # Check if user has access to this invoice
+        if not (current_user.id == invoice.admin_id or current_user.id == invoice.customer_id):
+            return jsonify({'success': False, 'message': 'Access denied'}), 403
+        
+        invoice_data = {
+            'id': invoice.id,
+            'invoice_number': invoice.invoice_number,
+            'total_amount': invoice.total_amount,
+            'gst_amount': invoice.gst_amount,
+            'created_at': invoice.created_at.isoformat(),
+            'items': []
+        }
+        
+        for item in invoice.items:
+            try:
+                product_name = item.product.name if item.product else 'Unknown Product'
+            except:
+                product_name = 'Unknown Product'
+            
+            invoice_data['items'].append({
+                'id': item.id,
+                'product_name': product_name,
+                'quantity': item.quantity,
+                'price': item.price,
+                'gst_rate': item.gst_rate
+            })
+        
         return jsonify({
             'success': True,
-            'invoice': {
-                'id': invoice_id,
-                'number': f'INV-{invoice_id:03d}',
-                'items': []
-            }
+            'invoice': invoice_data
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -687,7 +894,26 @@ def init_db():
             db.session.commit()
             print("Super admin created successfully!")
 
+# Initialize database and create super admin
+def init_db():
+    with app.app_context():
+        db.create_all()
+        
+        # Create super admin if it doesn't exist
+        super_admin = SuperAdmin.query.filter_by(email='admin@gstbilling.com').first()
+        if not super_admin:
+            super_admin = SuperAdmin(
+                name='Super Admin',
+                email='admin@gstbilling.com'
+            )
+            super_admin.set_password('admin123')
+            db.session.add(super_admin)
+            db.session.commit()
+            print("Super admin created successfully!")
+
+# Initialize database when app starts
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)

@@ -25,3 +25,4 @@ with app.app_context():
     else:
         print("Super admin already exists!")
 
+
