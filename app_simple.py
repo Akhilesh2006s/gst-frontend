@@ -66,7 +66,7 @@ def create_product():
             'product': product
         })
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/products/<int:product_id>', methods=['GET'])
 def get_product(product_id):
@@ -126,7 +126,8 @@ def create_customer():
             'billing_address': data.get('billing_address'),
             'state': data.get('state', ''),
             'pincode': data.get('pincode', ''),
-            'created_at': datetime.utcnow().isoformat()
+            'created_at': datetime.utcnow().isoformat(),
+            'is_active': True
         }
         customers.append(customer)
         
@@ -136,7 +137,7 @@ def create_customer():
             'customer': customer
         })
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Auth routes (simplified)
 @app.route('/api/auth/register', methods=['POST'])
