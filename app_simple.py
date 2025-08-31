@@ -17,7 +17,24 @@ CORS(app,
 )
 
 # Simple in-memory storage for demo
-products = []
+products = [
+    {
+        'id': 1,
+        'name': 'Sample Product 1',
+        'description': 'This is a sample product for testing',
+        'price': 100.0,
+        'stock_quantity': 50,
+        'created_at': datetime.utcnow().isoformat()
+    },
+    {
+        'id': 2,
+        'name': 'Sample Product 2',
+        'description': 'Another sample product for testing',
+        'price': 200.0,
+        'stock_quantity': 30,
+        'created_at': datetime.utcnow().isoformat()
+    }
+]
 customers = []
 orders = []
 invoices = []
