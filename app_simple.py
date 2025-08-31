@@ -36,8 +36,36 @@ products = [
     }
 ]
 customers = []
-orders = []
-invoices = []
+orders = [
+    {
+        'id': 1,
+        'order_number': 'ORD-0001',
+        'customer_id': 1,
+        'customer_name': 'Sample Customer',
+        'customer_email': 'customer@example.com',
+        'products': [],
+        'items': [],
+        'total_amount': 0,
+        'status': 'pending',
+        'created_at': datetime.utcnow().isoformat()
+    }
+]
+invoices = [
+    {
+        'id': 1,
+        'invoice_number': 'INV-0001',
+        'customer_id': 1,
+        'customer_name': 'Sample Customer',
+        'customer_email': 'customer@example.com',
+        'order_id': 1,
+        'products': [],
+        'items': [],
+        'total_amount': 0,
+        'gst_amount': 0,
+        'status': 'pending',
+        'created_at': datetime.utcnow().isoformat()
+    }
+]
 
 @app.route('/health')
 def health():
@@ -185,6 +213,7 @@ def create_customer_order():
             'customer_name': data.get('customer_name', 'Unknown Customer'),
             'customer_email': data.get('customer_email', 'unknown@example.com'),
             'products': data.get('products', []),
+            'items': data.get('products', []),  # Add items field for compatibility
             'total_amount': data.get('total_amount', 0),
             'status': 'pending',
             'created_at': datetime.utcnow().isoformat()
@@ -220,6 +249,7 @@ def create_customer_invoice():
             'customer_email': data.get('customer_email', 'unknown@example.com'),
             'order_id': data.get('order_id'),
             'products': data.get('products', []),
+            'items': data.get('products', []),  # Add items field for compatibility
             'total_amount': data.get('total_amount', 0),
             'gst_amount': data.get('gst_amount', 0),
             'status': 'pending',
@@ -303,6 +333,7 @@ def create_invoice():
             'customer_email': data.get('customer_email', 'unknown@example.com'),
             'order_id': data.get('order_id'),
             'products': data.get('products', []),
+            'items': data.get('products', []),  # Add items field for compatibility
             'total_amount': data.get('total_amount', 0),
             'gst_amount': data.get('gst_amount', 0),
             'status': 'pending',
