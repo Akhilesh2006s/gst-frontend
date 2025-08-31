@@ -101,18 +101,22 @@ const Inventory: React.FC = () => {
     }
     
     try {
+      const requestBody = {
+        name: newProduct.name,
+        description: newProduct.description,
+        price: parseFloat(newProduct.price),
+        stock_quantity: parseInt(newProduct.stock_quantity)
+      };
+      
+      console.log('Sending product data:', requestBody);
+      
       const response = await fetch('/api/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({
-          name: newProduct.name,
-          description: newProduct.description,
-          price: parseFloat(newProduct.price),
-          stock_quantity: parseInt(newProduct.stock_quantity)
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (response.ok) {
