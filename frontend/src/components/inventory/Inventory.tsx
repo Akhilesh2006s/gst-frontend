@@ -59,7 +59,7 @@ const Inventory: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        const products = data.inventory || [];
+        const products = data.products || [];
         
         // Transform products to inventory items
         const inventoryItems: InventoryItem[] = products.map((product: any) => ({
@@ -110,7 +110,7 @@ const Inventory: React.FC = () => {
       
       console.log('Sending product data:', requestBody);
       
-      const response = await fetch('/api/products', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,7 +169,7 @@ const Inventory: React.FC = () => {
     if (!selectedProduct) return;
 
     try {
-      const response = await fetch(`/api/products/${selectedProduct.id}/stock`, {
+      const response = await fetch(`https://web-production-84a3.up.railway.app/api/products/${selectedProduct.id}/stock`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

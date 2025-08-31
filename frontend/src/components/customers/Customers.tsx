@@ -40,7 +40,7 @@ const Customers: React.FC = () => {
   const loadCustomers = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/admin/customers', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/admin/customers', {
         credentials: 'include'
       });
       if (response.ok) {
@@ -57,7 +57,7 @@ const Customers: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/admin/customers', {
+      const response = await fetch('https://web-production-84a3.up.railway.app/api/admin/customers', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,7 +95,7 @@ const Customers: React.FC = () => {
   const handleDeleteCustomer = async (id: number) => {
     if (window.confirm('Are you sure you want to delete this customer?')) {
       try {
-        const response = await fetch(`/api/admin/customers/${id}`, {
+        const response = await fetch(`https://web-production-84a3.up.railway.app/api/admin/customers/${id}`, {
           method: 'DELETE',
           credentials: 'include'
         });
