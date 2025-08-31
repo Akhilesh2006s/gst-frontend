@@ -46,8 +46,21 @@ const SuperAdminDashboard: React.FC = () => {
 
   const fetchDashboardData = async () => {
     try {
+      // Get stored user data
+      const userData = localStorage.getItem('userData');
+      const userType = localStorage.getItem('userType');
+      
+      if (!userData || userType !== 'super_admin') {
+        setError('Not authenticated as Super Admin');
+        return;
+      }
+      
       const response = await fetch('https://web-production-84a3.up.railway.app/api/super-admin/dashboard', {
-        credentials: 'include'
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Type': 'super_admin'
+        }
       });
       
       if (!response.ok) {
@@ -121,12 +134,25 @@ const SuperAdminDashboard: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/super-admin/logout', {
+      // Clear local storage
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userType');
+      localStorage.removeItem('userData');
+      
+      // Call logout endpoint
+      await fetch('https://web-production-84a3.up.railway.app/api/super-admin/logout', {
+        method: 'POST',
         credentials: 'include'
       });
+      
+      // Navigate to login
       navigate('/login');
     } catch (err) {
       console.error('Error logging out:', err);
+      // Even if logout fails, clear local storage and navigate
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userType');
+      localStorage.removeItem('userData');
       navigate('/login');
     }
   };
