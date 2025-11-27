@@ -38,36 +38,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     try {
       // Check authentication first
       const authCheck = await fetch(`${API_BASE_URL}/auth/check`, {
-        credentials: 'include'
-      });
-      
-      if (!authCheck.ok) {
-        const authData = await authCheck.json().catch(() => ({}));
-        if (!authData.authenticated) {
-          console.warn('User not authenticated, redirecting to login');
-          // Clear local storage and redirect
-          localStorage.removeItem('isAuthenticated');
-          localStorage.removeItem('userType');
-          localStorage.removeItem('userData');
-          window.location.href = '/';
-          return;
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
         }
-      }
-      
-      // Fetch products
-      const productsResponse = await fetch(`${API_BASE_URL}/products/`, {
-        credentials: 'include'
       });
-      if (productsResponse.ok) {
-        const productsData = await productsResponse.json();
-        setProducts(productsData.products || []);
-      } else if (productsResponse.status === 401) {
-        console.warn('Products request unauthorized, redirecting to login');
+      
+      const authData = await authCheck.json().catch(() => ({ authenticated: false }));
+      console.log('Auth check result:', authData);
+      
+      if (!authCheck.ok || !authData.authenticated) {
+        console.warn('User not authenticated, redirecting to login');
+        // Clear local storage and redirect
         localStorage.removeItem('isAuthenticated');
         localStorage.removeItem('userType');
         localStorage.removeItem('userData');
         window.location.href = '/';
         return;
+      }
+      
+      // Small delay to ensure session is fully established
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Fetch products
+      const productsResponse = await fetch(`${API_BASE_URL}/products/`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Products response status:', productsResponse.status);
+      
+      if (productsResponse.ok) {
+        const productsData = await productsResponse.json();
+        setProducts(productsData.products || []);
+      } else if (productsResponse.status === 401) {
+        console.warn('Products request unauthorized, redirecting to login');
+        const errorText = await productsResponse.text().catch(() => '');
+        console.error('Products 401 error:', errorText);
+        localStorage.removeItem('isAuthenticated');
+        localStorage.removeItem('userType');
+        localStorage.removeItem('userData');
+        window.location.href = '/';
+        return;
+      } else {
+        console.error('Products request failed with status:', productsResponse.status);
       }
 
       // Fetch invoices
