@@ -36,6 +36,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
   const fetchDashboardData = async () => {
     try {
+      // Check authentication first
+      const authCheck = await fetch(`${API_BASE_URL}/auth/check`, {
+        credentials: 'include'
+      });
+      
+      if (!authCheck.ok) {
+        const authData = await authCheck.json().catch(() => ({}));
+        if (!authData.authenticated) {
+          console.warn('User not authenticated, redirecting to login');
+          // Clear local storage and redirect
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
+          window.location.href = '/';
+          return;
+        }
+      }
+      
       // Fetch products
       const productsResponse = await fetch(`${API_BASE_URL}/products/`, {
         credentials: 'include'
@@ -43,6 +61,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (productsResponse.ok) {
         const productsData = await productsResponse.json();
         setProducts(productsData.products || []);
+      } else if (productsResponse.status === 401) {
+        console.warn('Products request unauthorized, redirecting to login');
+        localStorage.removeItem('isAuthenticated');
+        localStorage.removeItem('userType');
+        localStorage.removeItem('userData');
+        window.location.href = '/';
+        return;
       }
 
       // Fetch invoices
@@ -52,6 +77,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (invoicesResponse.ok) {
         const invoicesData = await invoicesResponse.json();
         setInvoices(invoicesData.invoices || []);
+      } else if (invoicesResponse.status === 401) {
+        console.warn('Invoices request unauthorized');
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);

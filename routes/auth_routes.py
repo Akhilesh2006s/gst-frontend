@@ -94,13 +94,21 @@ def register():
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@auth_bp.route('/logout')
+@auth_bp.route('/logout', methods=['GET', 'POST'])
 def logout():
-    """User logout - bypassed for now"""
-    return jsonify({
-        'success': True,
-        'message': 'Logout successful'
-    })
+    """User logout"""
+    try:
+        logout_user()
+        session.clear()
+        return jsonify({
+            'success': True,
+            'message': 'Logout successful'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': True,
+            'message': 'Logout successful'
+        })
 
 @auth_bp.route('/profile', methods=['GET', 'POST'])
 def profile():

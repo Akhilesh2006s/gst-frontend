@@ -74,11 +74,38 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         localStorage.setItem('userType', userType);
         localStorage.setItem('userData', JSON.stringify(data.user || data.customer));
         
-        onLogin(userType);
-        if (userType === 'admin') {
-          navigate('/dashboard');
-        } else {
-          navigate('/customer-dashboard');
+        // Wait a moment for session cookie to be established
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Verify session is established
+        try {
+          const checkEndpoint = userType === 'admin' 
+            ? `${API_BASE_URL}/auth/check`
+            : `${API_BASE_URL}/customer-auth/profile`;
+          
+          const verifyResponse = await fetch(checkEndpoint, {
+            credentials: 'include'
+          });
+          
+          if (verifyResponse.ok) {
+            onLogin(userType);
+            if (userType === 'admin') {
+              navigate('/dashboard');
+            } else {
+              navigate('/customer-dashboard');
+            }
+          } else {
+            setError('Session establishment failed. Please try again.');
+            localStorage.removeItem('isAuthenticated');
+            localStorage.removeItem('userType');
+            localStorage.removeItem('userData');
+          }
+        } catch (verifyError) {
+          console.error('Session verification failed:', verifyError);
+          setError('Unable to verify session. Please try again.');
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
         }
       } else {
         setError(data.message || 'Login failed');

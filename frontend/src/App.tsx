@@ -31,16 +31,23 @@ const App: React.FC = () => {
     localStorage.setItem('userType', type);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Call logout endpoint to clear server session
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (error) {
+      console.error('Logout request failed:', error);
+      // Continue with logout even if request fails
+    }
+    
+    // Clear local state
     setUserType(null);
     localStorage.removeItem('userType');
     localStorage.removeItem('isAuthenticated');
     localStorage.removeItem('userData');
-    // Also call logout endpoint to clear server session
-    fetch(`${API_BASE_URL}/auth/logout`, {
-      method: 'POST',
-      credentials: 'include'
-    }).catch(() => {}); // Ignore errors
   };
 
   // Check for stored user type on app load

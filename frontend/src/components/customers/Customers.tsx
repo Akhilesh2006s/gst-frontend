@@ -81,6 +81,16 @@ const Customers: React.FC = () => {
           alert(`Failed to load customers: ${data.error || 'Unknown error'}`);
         }
       } else {
+        // Handle 401 - redirect to login
+        if (response.status === 401) {
+          console.warn('Authentication required. Redirecting to login...');
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
+          navigate('/');
+          return;
+        }
+        
         const errorData = await response.json().catch(() => ({ error: response.statusText }));
         console.error('Failed to load customers:', response.status, errorData);
         alert(`Failed to load customers: ${errorData.error || response.statusText} (Status: ${response.status})`);
@@ -99,6 +109,27 @@ const Customers: React.FC = () => {
     // Validate required fields
     if (!formData.name || !formData.email) {
       alert('Name and Email are required fields');
+      return;
+    }
+    
+    // Check authentication first
+    try {
+      const authCheck = await fetch(`${API_BASE_URL}/auth/check`, {
+        credentials: 'include'
+      });
+      
+      if (!authCheck.ok) {
+        const authData = await authCheck.json().catch(() => ({}));
+        if (!authData.authenticated) {
+          alert('You must be logged in to create customers. Please log in and try again.');
+          navigate('/');
+          return;
+        }
+      }
+    } catch (authError) {
+      console.error('Auth check failed:', authError);
+      alert('Unable to verify authentication. Please log in and try again.');
+      navigate('/');
       return;
     }
     
@@ -191,6 +222,16 @@ const Customers: React.FC = () => {
           alert(`Failed to create customer: ${data.error || 'Unknown error'}`);
         }
       } else {
+        // Handle 401 specifically
+        if (response.status === 401) {
+          alert('Your session has expired or you are not logged in. Please log in again.');
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('userType');
+          localStorage.removeItem('userData');
+          navigate('/');
+          return;
+        }
+        
         const errorMsg = data.error || data.message || responseText || 'Unknown error';
         alert(`Failed to create customer (${response.status}): ${errorMsg}`);
         console.error('Error details:', data);
