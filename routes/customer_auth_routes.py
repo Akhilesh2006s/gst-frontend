@@ -23,8 +23,14 @@ def register():
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
         # Get first admin user as default (or handle differently)
+        if db is None:
+            return jsonify({'success': False, 'message': 'Database not initialized'}), 500
+        
         admin_users = [User.from_dict(doc) for doc in db['users'].find().limit(1)]
         default_user_id = admin_users[0].id if admin_users else None
+        
+        if not default_user_id:
+            return jsonify({'success': False, 'message': 'No admin user found. Please create an admin user first.'}), 500
         
         # Create new customer
         customer = Customer(
@@ -52,13 +58,21 @@ def register():
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Registration error: {error_msg}'}), 500
 
 @customer_auth_bp.route('/login', methods=['POST'])
 def login():
     """Customer login"""
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+        
+        if 'email' not in data or 'password' not in data:
+            return jsonify({'success': False, 'message': 'Email and password are required'}), 400
         
         customer = Customer.find_by_email(data['email'])
         if customer and customer.check_password(data['password']):
@@ -78,7 +92,10 @@ def login():
             return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Login error: {error_msg}'}), 500
 
 @customer_auth_bp.route('/logout')
 @login_required
@@ -111,7 +128,10 @@ def forgot_password():
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Registration error: {error_msg}'}), 500
 
 @customer_auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
@@ -142,7 +162,10 @@ def reset_password():
         return jsonify({'success': True, 'message': 'Password reset successful'})
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Registration error: {error_msg}'}), 500
 
 @customer_auth_bp.route('/profile')
 @login_required

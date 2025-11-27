@@ -20,6 +20,11 @@ def login():
     """Admin login"""
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+        
+        if 'email' not in data or 'password' not in data:
+            return jsonify({'success': False, 'message': 'Email and password are required'}), 400
         
         user = User.find_by_email(data['email'])
         if user and user.check_password(data['password']):
@@ -45,16 +50,25 @@ def login():
             return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Login error: {error_msg}'}), 500
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """Admin registration"""
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+        
+        if 'email' not in data or 'password' not in data:
+            return jsonify({'success': False, 'message': 'Email and password are required'}), 400
         
         # Check if username or email already exists
-        if User.find_by_username(data.get('name', '')):
+        username = data.get('name', data.get('username', data['email']))
+        if username and User.find_by_username(username):
             return jsonify({'success': False, 'message': 'Username already exists'}), 400
         
         if User.find_by_email(data['email']):
@@ -62,7 +76,7 @@ def register():
         
          # Create new admin user (auto-approved)
         user = User(
-            username=data.get('name', data['email']),
+            username=username,
             email=data['email'],
             business_name=data.get('business_name', 'My Business'),
             gst_number=data.get('gst_number', '00AAAAA0000A1Z5'),
@@ -89,7 +103,10 @@ def register():
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Registration error: {error_msg}'}), 500
 
 @auth_bp.route('/logout', methods=['GET', 'POST'])
 def logout():

@@ -109,31 +109,46 @@ class User(UserMixin):
     
     def save(self):
         """Save user to MongoDB"""
-        data = self.to_dict()
-        if '_id' in data and data['_id']:
-            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
-        else:
-            result = db[self.collection_name].insert_one(data)
-            self.id = str(result.inserted_id)
-        return self
+        try:
+            if db is None:
+                raise ValueError("Database not initialized. Call init_app() first.")
+            data = self.to_dict()
+            if '_id' in data and data['_id']:
+                db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+            else:
+                result = db[self.collection_name].insert_one(data)
+                self.id = str(result.inserted_id)
+            return self
+        except Exception as e:
+            print(f"Error saving user: {e}")
+            raise
     
     @classmethod
     def find_by_id(cls, user_id):
         """Find user by ID"""
         try:
+            if db is None:
+                return None
+            if not user_id:
+                return None
             doc = db[cls.collection_name].find_one({'_id': ObjectId(user_id)})
             if doc:
                 return cls.from_dict(doc)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error finding user by ID: {e}")
         return None
     
     @classmethod
     def find_by_email(cls, email):
         """Find user by email"""
-        doc = db[cls.collection_name].find_one({'email': email})
-        if doc:
-            return cls.from_dict(doc)
+        try:
+            if db is None:
+                return None
+            doc = db[cls.collection_name].find_one({'email': email})
+            if doc:
+                return cls.from_dict(doc)
+        except Exception as e:
+            print(f"Error finding user by email: {e}")
         return None
     
     @classmethod
@@ -293,13 +308,19 @@ class Customer(UserMixin):
     
     def save(self):
         """Save customer to MongoDB"""
-        data = self.to_dict()
-        if '_id' in data and data['_id']:
-            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
-        else:
-            result = db[self.collection_name].insert_one(data)
-            self.id = str(result.inserted_id)
-        return self
+        try:
+            if db is None:
+                raise ValueError("Database not initialized. Call init_app() first.")
+            data = self.to_dict()
+            if '_id' in data and data['_id']:
+                db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+            else:
+                result = db[self.collection_name].insert_one(data)
+                self.id = str(result.inserted_id)
+            return self
+        except Exception as e:
+            print(f"Error saving customer: {e}")
+            raise
     
     @classmethod
     def find_by_id(cls, customer_id):
@@ -315,9 +336,14 @@ class Customer(UserMixin):
     @classmethod
     def find_by_email(cls, email):
         """Find customer by email"""
-        doc = db[cls.collection_name].find_one({'email': email})
-        if doc:
-            return cls.from_dict(doc)
+        try:
+            if db is None:
+                return None
+            doc = db[cls.collection_name].find_one({'email': email})
+            if doc:
+                return cls.from_dict(doc)
+        except Exception as e:
+            print(f"Error finding customer by email: {e}")
         return None
     
     def __repr__(self):
@@ -360,7 +386,7 @@ class Product:
     @property
     def is_low_stock(self):
         return self.stock_quantity <= self.min_stock_level
-    
+
     def to_dict(self):
         return {
             '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
@@ -465,21 +491,21 @@ class Invoice:
         if customer and user:
             customer_state = customer.state
             business_state = user.business_state
-            
-            if customer_state == business_state:
-                # Same state - CGST + SGST
+        
+        if customer_state == business_state:
+            # Same state - CGST + SGST
                 total_gst = sum(item.get('gst_amount', 0) for item in self.items)
-                self.cgst_amount = total_gst / 2
-                self.sgst_amount = total_gst / 2
-                self.igst_amount = 0.0
-            else:
-                # Different state - IGST
+            self.cgst_amount = total_gst / 2
+            self.sgst_amount = total_gst / 2
+            self.igst_amount = 0.0
+        else:
+            # Different state - IGST
                 self.igst_amount = sum(item.get('gst_amount', 0) for item in self.items)
-                self.cgst_amount = 0.0
-                self.sgst_amount = 0.0
+            self.cgst_amount = 0.0
+            self.sgst_amount = 0.0
         
         self.total_amount = self.subtotal + self.cgst_amount + self.sgst_amount + self.igst_amount
-    
+
     def to_dict(self):
         return {
             '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
@@ -559,7 +585,7 @@ class InvoiceItem:
     def calculate_totals(self):
         """Calculate item totals"""
         self.total = self.quantity * self.unit_price
-    
+
     def to_dict(self):
         return {
             '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
@@ -723,7 +749,7 @@ class Order:
         """Calculate order totals"""
         self.subtotal = sum(item.get('total', 0) for item in self.items)
         self.total_amount = self.subtotal
-    
+
     def to_dict(self):
         return {
             '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
@@ -790,7 +816,7 @@ class OrderItem:
     def calculate_totals(self):
         """Calculate item totals"""
         self.total = self.quantity * self.unit_price
-    
+
     def to_dict(self):
         return {
             '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
@@ -885,6 +911,6 @@ class CustomerProductPrice:
         except:
             pass
         return None
-    
+
     def __repr__(self):
         return f'<CustomerProductPrice Customer:{self.customer_id} Product:{self.product_id} Price:{self.price}>'
