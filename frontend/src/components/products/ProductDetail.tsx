@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import API_BASE_URL from '../../config/api';
 
 interface Product {
   id: number;
@@ -34,7 +35,7 @@ const ProductDetail: React.FC = () => {
         
         console.log('Loading product with ID:', id);
         
-        const response = await fetch(`/api/products/${id}`, {
+        const response = await fetch(`${API_BASE_URL}/products/${id}`, {
           credentials: 'include'
         });
         

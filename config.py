@@ -8,7 +8,7 @@ class Config:
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     
     # CORS settings
-    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+    CORS_ORIGINS = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')]
     
     # Security settings
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_ENV') == 'production'

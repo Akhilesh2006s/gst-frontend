@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, send_file
+from flask import Flask, render_template, send_from_directory, jsonify, request, send_file, make_response
 from flask_cors import CORS
 import os
 from config import config
@@ -24,24 +24,20 @@ from routes.report_routes import report_bp
 from routes.customer_auth_routes import customer_auth_bp
 from routes.super_admin_routes import super_admin_bp
 from routes.admin_routes import admin_bp
+from routes.import_export_routes import import_export_bp
 
 def create_app(config_name='development'):
     app = Flask(__name__, static_folder='frontend/dist', template_folder='frontend/dist')
     app.config.from_object(config[config_name])
     
     # Enable CORS for API routes with credentials support
+    cors_origins = app.config.get('CORS_ORIGINS', ['http://localhost:3000', 'http://localhost:5173'])
     CORS(app, resources={
         r"/api/*": {
-            "origins": [
-                "http://localhost:3000",
-                "http://localhost:5173", 
-                "http://127.0.0.1:3000",
-                "http://127.0.0.1:5173",
-                "https://web-production-84a3.up.railway.app"
-            ], 
+            "origins": cors_origins if app.config.get('FLASK_ENV') == 'production' else "*",
             "supports_credentials": True,
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"]
+            "allow_headers": ["Content-Type", "Authorization", "Origin", "Accept", "X-Requested-With"]
         }
     })
     
@@ -70,6 +66,17 @@ def create_app(config_name='development'):
         customer = Customer.query.get(int(user_id))
         return customer
     
+    # Allow OPTIONS requests globally to avoid login redirects during CORS preflight
+    @app.before_request
+    def handle_cors_preflight():
+        if request.method == 'OPTIONS':
+            response = make_response('', 200)
+            response.headers.add("Access-Control-Allow-Origin", request.headers.get('Origin', '*'))
+            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,Origin,Accept,X-Requested-With")
+            response.headers.add('Access-Control-Allow-Methods', "GET,POST,PUT,DELETE,OPTIONS")
+            response.headers.add('Access-Control-Allow-Credentials', "true")
+            return response
+
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
@@ -81,6 +88,7 @@ def create_app(config_name='development'):
     app.register_blueprint(customer_auth_bp, url_prefix='/api/customer-auth')
     app.register_blueprint(super_admin_bp, url_prefix='/api/super-admin')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
+    app.register_blueprint(import_export_bp, url_prefix='/api')
     
     # PDF Generation endpoint
     @app.route('/api/generate-pdf', methods=['POST'])
@@ -241,22 +249,7 @@ def create_app(config_name='development'):
     return app
 
 if __name__ == '__main__':
-    app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=5000)
-
-# Create app instance for Railway
-try:
-    app = create_app('production')
-    print("✅ App created successfully")
-except Exception as e:
-    print(f"❌ Error creating app: {e}")
-    # Create a minimal app for healthcheck
-    app = Flask(__name__)
-    
-    @app.route('/health')
-    def health():
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
-    
-    @app.route('/')
-    def health_check():
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
+    config_name = os.environ.get('FLASK_ENV', 'development')
+    app = create_app(config_name)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=(config_name == 'development'), host='0.0.0.0', port=port)

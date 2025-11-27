@@ -23,9 +23,10 @@ def login():
         
         user = User.query.filter_by(email=data['email']).first()
         if user and user.check_password(data['password']):
-            # Check if admin is approved
+            # Auto-approve legacy users if needed
             if not user.is_approved:
-                return jsonify({'success': False, 'message': 'Your account is pending approval. Please wait for super admin approval.'}), 403
+                user.is_approved = True
+                db.session.commit()
             
             login_user(user, remember=data.get('remember_me', False))
             session.permanent = True
@@ -59,7 +60,7 @@ def register():
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
-        # Create new admin user
+         # Create new admin user (auto-approved)
         user = User(
             username=data.get('name', data['email']),
             email=data['email'],
@@ -70,7 +71,8 @@ def register():
             business_email=data['email'],
             business_state=data.get('business_state', 'Delhi'),
             business_pincode=data.get('business_pincode', '110001'),
-            business_reason=data.get('business_reason', 'Business reason not provided')
+             business_reason=data.get('business_reason', 'Business reason not provided'),
+             is_approved=True
         )
         user.set_password(data['password'])
         

@@ -1,7 +1,8 @@
 import { User, Customer, Product, GSTReport, DashboardStats, SalesChartData, LoginForm, RegisterForm, CustomerForm, ProductForm } from '../types';
+import API_BASE_URL from '../config/api';
 
 class ApiService {
-  private baseUrl = 'https://web-production-84a3.up.railway.app/api';
+  private baseUrl = API_BASE_URL;
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;

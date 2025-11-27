@@ -1,9 +1,7 @@
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
-
-db = SQLAlchemy()
+from database import db
 
 class User(UserMixin, db.Model):
     """User model for business owners"""
@@ -27,7 +25,13 @@ class User(UserMixin, db.Model):
     
     # Relationships
     customers = db.relationship('Customer', backref='user', lazy=True, cascade='all, delete-orphan')
-    products = db.relationship('Product', backref='user', lazy=True, cascade='all, delete-orphan')
+    products = db.relationship(
+        'Product',
+        foreign_keys='Product.user_id',
+        backref='user',
+        lazy=True,
+        cascade='all, delete-orphan'
+    )
     invoices = db.relationship('Invoice', backref='user', lazy=True, cascade='all, delete-orphan')
     
     def set_password(self, password):
@@ -67,12 +71,24 @@ class Customer(UserMixin, db.Model):
     name = db.Column(db.String(200), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    phone = db.Column(db.String(15), nullable=False)
+    phone = db.Column(db.String(15), nullable=True)
     gstin = db.Column(db.String(15), nullable=True)
-    billing_address = db.Column(db.Text, nullable=False)
+    company_name = db.Column(db.String(200), nullable=True)
+    billing_address = db.Column(db.Text, nullable=True)
     shipping_address = db.Column(db.Text, nullable=True)
-    state = db.Column(db.String(50), nullable=False)
-    pincode = db.Column(db.String(10), nullable=False)
+    state = db.Column(db.String(50), nullable=True)
+    pincode = db.Column(db.String(10), nullable=True)
+    # Optional banking/financial fields used by various routes
+    bank_name = db.Column(db.String(200), nullable=True)
+    bank_account_number = db.Column(db.String(50), nullable=True)
+    bank_ifsc = db.Column(db.String(20), nullable=True)
+    opening_balance = db.Column(db.Float, nullable=True, default=0.0)
+    opening_balance_type = db.Column(db.String(10), nullable=True, default='debit')
+    credit_limit = db.Column(db.Float, nullable=True, default=0.0)
+    discount = db.Column(db.Float, nullable=True, default=0.0)
+    notes = db.Column(db.Text, nullable=True)
+    tags = db.Column(db.String(500), nullable=True)
+    cc_emails = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
@@ -93,6 +109,7 @@ class Product(db.Model):
     """Product model"""
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     name = db.Column(db.String(200), nullable=False)
     sku = db.Column(db.String(50), nullable=False)
     hsn_code = db.Column(db.String(10), nullable=True)
@@ -100,6 +117,7 @@ class Product(db.Model):
     category = db.Column(db.String(100), nullable=True)
     brand = db.Column(db.String(100), nullable=True)
     price = db.Column(db.Float, nullable=False)
+    purchase_price = db.Column(db.Float, nullable=True, default=0.0)
     gst_rate = db.Column(db.Float, nullable=False, default=18.0)
     stock_quantity = db.Column(db.Integer, nullable=False, default=0)
     min_stock_level = db.Column(db.Integer, nullable=False, default=10)
@@ -107,6 +125,12 @@ class Product(db.Model):
     image_url = db.Column(db.String(500), nullable=True)
     weight = db.Column(db.Float, nullable=True)
     dimensions = db.Column(db.String(100), nullable=True)
+    vegetable_name = db.Column(db.String(200), nullable=True)
+    vegetable_name_hindi = db.Column(db.String(200), nullable=True)
+    quantity_gm = db.Column(db.Float, nullable=True)
+    quantity_kg = db.Column(db.Float, nullable=True)
+    rate_per_gm = db.Column(db.Float, nullable=True)
+    rate_per_kg = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
@@ -114,6 +138,7 @@ class Product(db.Model):
     # Relationships
     invoice_items = db.relationship('InvoiceItem', backref='product', lazy=True)
     stock_movements = db.relationship('StockMovement', backref='product', lazy=True)
+    admin = db.relationship('User', foreign_keys=[admin_id], backref='admin_products', lazy=True)
     
     def __repr__(self):
         return f'<Product {self.name}>'
@@ -261,3 +286,23 @@ class OrderItem(db.Model):
     def calculate_totals(self):
         """Calculate item totals"""
         self.total = self.quantity * self.unit_price
+
+
+class CustomerProductPrice(db.Model):
+    """Customer-specific product pricing"""
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('customer_id', 'product_id', name='_customer_product_price_uc'),
+    )
+
+    customer = db.relationship('Customer', backref='product_prices', lazy=True)
+    product = db.relationship('Product', backref='customer_prices', lazy=True)
+
+    def __repr__(self):
+        return f'<CustomerProductPrice Customer:{self.customer_id} Product:{self.product_id} Price:{self.price}>'
