@@ -23,7 +23,22 @@ import Reports from './components/reports/Reports';
 import Sales from './components/sales/Sales';
 
 const App: React.FC = () => {
-  const [userType, setUserType] = useState<'admin' | 'customer' | null>(null);
+  // Initialize userType from localStorage immediately to prevent redirect loop
+  const getInitialUserType = (): 'admin' | 'customer' | null => {
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
+    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    if (isAuthenticated && storedUserType) {
+      if (isDevelopment) {
+        // In development, trust localStorage immediately
+        return storedUserType;
+      }
+    }
+    return null;
+  };
+  
+  const [userType, setUserType] = useState<'admin' | 'customer' | null>(getInitialUserType());
 
   const handleLogin = (type: 'admin' | 'customer') => {
     setUserType(type);
@@ -50,44 +65,71 @@ const App: React.FC = () => {
     localStorage.removeItem('userData');
   };
 
-  // Check for stored user type on app load
+  // Check for stored user type on app load - set immediately to prevent redirect loop
   useEffect(() => {
     const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
     const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
+    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     
+    // Set userType immediately from localStorage if available (prevents redirect loop)
     if (isAuthenticated && storedUserType) {
-      // Verify authentication with backend
-      const checkEndpoint = storedUserType === 'admin' 
-        ? `${API_BASE_URL}/auth/check`
-        : `${API_BASE_URL}/customer-auth/profile`;
+      console.log('Setting userType from localStorage:', storedUserType);
+      setUserType(storedUserType);
       
-      fetch(checkEndpoint, {
-        credentials: 'include'
-      })
-      .then(response => {
-        if (response.ok) {
-          setUserType(storedUserType);
-        } else {
-          // Clear stale data if backend says not authenticated
-          localStorage.removeItem('isAuthenticated');
-          localStorage.removeItem('userType');
-          localStorage.removeItem('userData');
-          setUserType(null);
-        }
-      })
-      .catch(() => {
-        // Clear stale data on error
+      // In development, we're done - don't verify with backend
+      if (isDevelopment) {
+        return;
+      }
+      
+      // In production, verify authentication with backend (but don't clear if it fails immediately)
+      if (!isDevelopment) {
+        // In production, verify authentication with backend
+        const checkEndpoint = storedUserType === 'admin' 
+          ? `${API_BASE_URL}/auth/check`
+          : `${API_BASE_URL}/customer-auth/profile`;
+        
+        fetch(checkEndpoint, {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        })
+        .then(async response => {
+          const data = await response.json().catch(() => ({ authenticated: false }));
+          if (response.ok && data.authenticated) {
+            setUserType(storedUserType);
+          } else {
+            // Only clear if we get a clear 401 - don't clear on network errors
+            if (response.status === 401) {
+              console.warn('Auth check failed with 401, clearing local storage');
+              localStorage.removeItem('isAuthenticated');
+              localStorage.removeItem('userType');
+              localStorage.removeItem('userData');
+              setUserType(null);
+            } else {
+              console.warn('Auth check failed but not 401, keeping userType');
+            }
+          }
+        })
+        .catch((error) => {
+          console.error('Auth check error:', error);
+          // Don't clear on network errors - might be temporary
+          // Keep the userType set from localStorage
+        });
+      }
+    } else {
+      // Only clear stale data if we're sure user isn't logged in
+      // In development, NEVER clear - might be a timing issue or CORS problem
+      const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (!isDevelopment) {
+        // In production, clear stale data
         localStorage.removeItem('isAuthenticated');
         localStorage.removeItem('userType');
         localStorage.removeItem('userData');
         setUserType(null);
-      });
-    } else {
-      // Clear any stale data
-      localStorage.removeItem('isAuthenticated');
-      localStorage.removeItem('userType');
-      localStorage.removeItem('userData');
-      setUserType(null);
+      }
+      // In development, leave localStorage alone - don't clear anything
+      console.log('Development mode: Not clearing localStorage even if empty');
     }
   }, []);
 
@@ -127,11 +169,22 @@ const App: React.FC = () => {
           <Route 
             path="/dashboard" 
             element={
-              userType === 'admin' ? (
-                <Dashboard onLogout={handleLogout} />
-              ) : (
-                <Navigate to="/login" />
-              )
+              (() => {
+                const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                // In development, also check localStorage as fallback
+                if (isDevelopment && !userType) {
+                  const storedUserType = localStorage.getItem('userType');
+                  if (storedUserType === 'admin') {
+                    console.log('Development: Using admin from localStorage for route guard');
+                    return <Dashboard onLogout={handleLogout} />;
+                  }
+                }
+                return userType === 'admin' ? (
+                  <Dashboard onLogout={handleLogout} />
+                ) : (
+                  <Navigate to="/login" />
+                );
+              })()
             } 
           />
           

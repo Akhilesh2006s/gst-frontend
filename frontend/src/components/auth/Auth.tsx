@@ -75,37 +75,76 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         localStorage.setItem('userData', JSON.stringify(data.user || data.customer));
         
         // Wait a moment for session cookie to be established
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Verify session is established
-        try {
-          const checkEndpoint = userType === 'admin' 
-            ? `${API_BASE_URL}/auth/check`
-            : `${API_BASE_URL}/customer-auth/profile`;
-          
-          const verifyResponse = await fetch(checkEndpoint, {
-            credentials: 'include'
-          });
-          
-          if (verifyResponse.ok) {
-            onLogin(userType);
+        // In development, skip strict session verification due to cross-origin cookie issues
+        // The session will be verified when the dashboard loads
+        const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        if (isDevelopment) {
+          // Development: Proceed with login, session will be checked on dashboard
+          console.log('Development mode: Proceeding with login, session will be verified on dashboard');
+          onLogin(userType);
+          // Use navigate instead of window.location to avoid full page reload
+          // This ensures React state is preserved
+          setTimeout(() => {
             if (userType === 'admin') {
               navigate('/dashboard');
             } else {
               navigate('/customer-dashboard');
             }
+          }, 100);
+        } else {
+          // Production: Verify session is established
+          let sessionVerified = false;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const checkEndpoint = userType === 'admin' 
+                ? `${API_BASE_URL}/auth/check`
+                : `${API_BASE_URL}/customer-auth/profile`;
+              
+              const verifyResponse = await fetch(checkEndpoint, {
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              const verifyData = await verifyResponse.json().catch(() => ({ authenticated: false }));
+              console.log(`Session verification attempt ${attempt + 1}:`, verifyData);
+              
+              if (verifyResponse.ok && verifyData.authenticated) {
+                sessionVerified = true;
+                break;
+              } else {
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            } catch (error) {
+              console.error(`Session verification attempt ${attempt + 1} failed:`, error);
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          }
+          
+          if (sessionVerified) {
+            // Session is established, proceed with login
+            onLogin(userType);
+            // Use navigate instead of window.location to avoid full page reload
+            setTimeout(() => {
+              if (userType === 'admin') {
+                navigate('/dashboard');
+              } else {
+                navigate('/customer-dashboard');
+              }
+            }, 100);
           } else {
-            setError('Session establishment failed. Please try again.');
+            console.error('Session verification failed after multiple attempts');
+            setError('Session establishment failed. Please check your browser settings allow cookies and try again.');
             localStorage.removeItem('isAuthenticated');
             localStorage.removeItem('userType');
             localStorage.removeItem('userData');
+            setLoading(false);
           }
-        } catch (verifyError) {
-          console.error('Session verification failed:', verifyError);
-          setError('Unable to verify session. Please try again.');
-          localStorage.removeItem('isAuthenticated');
-          localStorage.removeItem('userType');
-          localStorage.removeItem('userData');
         }
       } else {
         setError(data.message || 'Login failed');

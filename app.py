@@ -30,6 +30,9 @@ def create_app(config_name='development'):
     app = Flask(__name__, static_folder='frontend/dist', template_folder='frontend/dist')
     app.config.from_object(config[config_name])
     
+    # Disable strict slashes to prevent redirects that break CORS preflight
+    app.url_map.strict_slashes = False
+    
     # Enable CORS for API routes with credentials support
     cors_origins = app.config.get('CORS_ORIGINS', ['http://localhost:3000', 'http://localhost:5173'])
     CORS(app, resources={
