@@ -13,7 +13,8 @@ class Config:
     # Security settings
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_ENV') == 'production'
     SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = 'Lax'
+    # Use 'None' for cross-origin requests, but requires Secure=True (HTTPS)
+    SESSION_COOKIE_SAMESITE = 'None' if os.environ.get('FLASK_ENV') == 'production' else 'Lax'
     
     # Port configuration for Railway
     PORT = int(os.environ.get('PORT', 5000))
