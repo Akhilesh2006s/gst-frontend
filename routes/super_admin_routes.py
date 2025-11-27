@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
-from models import db, SuperAdmin, User
+from models import SuperAdmin, User
+from database import db
+from bson import ObjectId
 from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
@@ -14,7 +16,7 @@ def login():
     try:
         data = request.get_json()
         
-        super_admin = SuperAdmin.query.filter_by(email=data['email']).first()
+        super_admin = SuperAdmin.find_by_email(data['email'])
         if super_admin and super_admin.check_password(data['password']):
             login_user(super_admin, remember=data.get('remember_me', False))
             session.permanent = True
@@ -52,18 +54,22 @@ def dashboard():
         print(f"User authenticated: {current_user.is_authenticated}")
         print(f"Session: {session}")
         # Get pending admin registrations
-        pending_admins = User.query.filter_by(is_approved=False, is_active=True).all()
+        pending_admins = [User.from_dict(doc) for doc in db['users'].find(
+            {'is_approved': False, 'is_active': True}
+        )]
         
         # Get approved admins
-        approved_admins = User.query.filter_by(is_approved=True, is_active=True).all()
+        approved_admins = [User.from_dict(doc) for doc in db['users'].find(
+            {'is_approved': True, 'is_active': True}
+        )]
         
         # Get total customers
         from models import Customer
-        total_customers = Customer.query.filter_by(is_active=True).count()
+        total_customers = db['customers'].count_documents({'is_active': True})
         
         # Get total products
         from models import Product
-        total_products = Product.query.filter_by(is_active=True).count()
+        total_products = db['products'].count_documents({'is_active': True})
         
         pending_list = []
         for admin in pending_admins:
@@ -109,7 +115,7 @@ def dashboard():
 def approve_admin(admin_id):
     """Approve admin registration"""
     try:
-        admin = User.query.get(admin_id)
+        admin = User.find_by_id(admin_id)
         if not admin:
             return jsonify({'success': False, 'message': 'Admin not found'}), 404
         
@@ -121,7 +127,7 @@ def approve_admin(admin_id):
         admin.approved_by = current_user.id
         admin.approved_at = datetime.utcnow()
         
-        db.session.commit()
+        admin.save()
         
         # Send approval email
         send_approval_email(admin.email, admin.business_name)
@@ -132,7 +138,6 @@ def approve_admin(admin_id):
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @super_admin_bp.route('/reject-admin/<int:admin_id>', methods=['POST'])
@@ -140,7 +145,7 @@ def approve_admin(admin_id):
 def reject_admin(admin_id):
     """Reject admin registration"""
     try:
-        admin = User.query.get(admin_id)
+        admin = User.find_by_id(admin_id)
         if not admin:
             return jsonify({'success': False, 'message': 'Admin not found'}), 404
         
@@ -151,8 +156,8 @@ def reject_admin(admin_id):
         send_rejection_email(admin.email, admin.business_name)
         
         # Delete the admin registration
-        db.session.delete(admin)
-        db.session.commit()
+        admin_id_obj = ObjectId(admin_id) if isinstance(admin_id, str) else admin_id
+        db['users'].delete_one({'_id': admin_id_obj})
         
         return jsonify({
             'success': True,
@@ -160,7 +165,6 @@ def reject_admin(admin_id):
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 def send_approval_email(email, business_name):

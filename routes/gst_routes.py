@@ -1,7 +1,8 @@
 from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify, send_file
 from flask_login import login_required, current_user
-from models import db, Invoice, InvoiceItem, GSTReport
-from sqlalchemy import func, extract
+from models import Invoice, InvoiceItem, GSTReport
+from database import db
+from bson import ObjectId
 from datetime import datetime, date
 import calendar
 import json
@@ -18,37 +19,67 @@ def index():
     current_month = now.month
     current_year = now.year
     
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    
     # Get GST summary for current month
-    gst_summary = db.session.query(
-        func.sum(Invoice.subtotal).label('total_taxable_value'),
-        func.sum(Invoice.cgst_amount).label('total_cgst'),
-        func.sum(Invoice.sgst_amount).label('total_sgst'),
-        func.sum(Invoice.igst_amount).label('total_igst'),
-        func.count(Invoice.id).label('total_invoices')
-    ).filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == current_month,
-        extract('year', Invoice.invoice_date) == current_year,
-        Invoice.status == 'paid'
-    ).first()
+    gst_summary_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'status': 'paid',
+            '$expr': {
+                '$and': [
+                    {'$eq': [{'$month': '$invoice_date'}, current_month]},
+                    {'$eq': [{'$year': '$invoice_date'}, current_year]}
+                ]
+            }
+        }},
+        {'$group': {
+            '_id': None,
+            'total_taxable_value': {'$sum': '$subtotal'},
+            'total_cgst': {'$sum': '$cgst_amount'},
+            'total_sgst': {'$sum': '$sgst_amount'},
+            'total_igst': {'$sum': '$igst_amount'},
+            'total_invoices': {'$sum': 1}
+        }}
+    ]
+    gst_summary_result = list(db['invoices'].aggregate(gst_summary_pipeline))
+    gst_summary = gst_summary_result[0] if gst_summary_result else {
+        'total_taxable_value': 0, 'total_cgst': 0, 'total_sgst': 0, 'total_igst': 0, 'total_invoices': 0
+    }
     
     # Get GST summary by rate
-    gst_by_rate = db.session.query(
-        InvoiceItem.gst_rate,
-        func.sum(InvoiceItem.total).label('taxable_value'),
-        func.sum(InvoiceItem.gst_amount).label('gst_amount'),
-        func.count(InvoiceItem.id).label('item_count')
-    ).join(Invoice).filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == current_month,
-        extract('year', Invoice.invoice_date) == current_year,
-        Invoice.status == 'paid'
-    ).group_by(InvoiceItem.gst_rate).all()
+    gst_by_rate_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'status': 'paid',
+            '$expr': {
+                '$and': [
+                    {'$eq': [{'$month': '$invoice_date'}, current_month]},
+                    {'$eq': [{'$year': '$invoice_date'}, current_year]}
+                ]
+            }
+        }},
+        {'$unwind': '$items'},
+        {'$group': {
+            '_id': '$items.gst_rate',
+            'taxable_value': {'$sum': '$items.total'},
+            'gst_amount': {'$sum': '$items.gst_amount'},
+            'item_count': {'$sum': 1}
+        }},
+        {'$project': {
+            'gst_rate': '$_id',
+            'taxable_value': 1,
+            'gst_amount': 1,
+            'item_count': 1,
+            '_id': 0
+        }}
+    ]
+    gst_by_rate = list(db['invoices'].aggregate(gst_by_rate_pipeline))
     
     # Get recent GST reports
-    recent_reports = GSTReport.query.filter_by(
-        user_id=current_user.id
-    ).order_by(GSTReport.created_at.desc()).limit(5).all()
+    recent_reports = [GSTReport.from_dict(doc) for doc in db['gst_reports'].find(
+        {'user_id': user_id_obj}
+    ).sort('created_at', -1).limit(5)]
     
     return render_template('gst/index.html', 
                          gst_summary=gst_summary,
@@ -65,17 +96,25 @@ def gstr1():
     year = request.args.get('year', datetime.now().year, type=int)
     
     # Get invoices for the specified month
-    invoices = Invoice.query.filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == month,
-        extract('year', Invoice.invoice_date) == year,
-        Invoice.status == 'paid'
-    ).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find({
+        'user_id': user_id_obj,
+        'status': 'paid',
+        '$expr': {
+            '$and': [
+                {'$eq': [{'$month': '$invoice_date'}, month]},
+                {'$eq': [{'$year': '$invoice_date'}, year]}
+            ]
+        }
+    })]
     
     # Group by GST rate
     gst_data = {}
     for invoice in invoices:
-        for item in invoice.items:
+        invoice_items = invoice.items if invoice.items else []
+        for item_data in invoice_items:
+            if isinstance(item_data, dict):
+                rate = item_data.get('gst_rate', 0)
             rate = item.gst_rate
             if rate not in gst_data:
                 gst_data[rate] = {
@@ -86,20 +125,21 @@ def gstr1():
                     'invoices': []
                 }
             
-            gst_data[rate]['taxable_value'] += item.total
-            gst_data[rate]['cgst'] += item.gst_amount / 2 if invoice.cgst_amount > 0 else 0
-            gst_data[rate]['sgst'] += item.gst_amount / 2 if invoice.sgst_amount > 0 else 0
-            gst_data[rate]['igst'] += item.gst_amount if invoice.igst_amount > 0 else 0
-            
-            if invoice.id not in [inv['id'] for inv in gst_data[rate]['invoices']]:
-                gst_data[rate]['invoices'].append({
-                    'id': invoice.id,
-                    'invoice_number': invoice.invoice_number,
-                    'invoice_date': invoice.invoice_date,
-                    'customer_name': invoice.customer.name,
-                    'customer_gstin': invoice.customer.gstin,
-                    'total_amount': invoice.total_amount
-                })
+                gst_data[rate]['taxable_value'] += item_data.get('total', 0)
+                gst_data[rate]['cgst'] += (item_data.get('gst_amount', 0) / 2) if invoice.cgst_amount and invoice.cgst_amount > 0 else 0
+                gst_data[rate]['sgst'] += (item_data.get('gst_amount', 0) / 2) if invoice.sgst_amount and invoice.sgst_amount > 0 else 0
+                gst_data[rate]['igst'] += item_data.get('gst_amount', 0) if invoice.igst_amount and invoice.igst_amount > 0 else 0
+                
+                customer = Customer.find_by_id(invoice.customer_id)
+                if invoice.id not in [inv.get('id') for inv in gst_data[rate]['invoices']]:
+                    gst_data[rate]['invoices'].append({
+                        'id': invoice.id,
+                        'invoice_number': invoice.invoice_number,
+                        'invoice_date': invoice.invoice_date.isoformat() if invoice.invoice_date else '',
+                        'customer_name': customer.name if customer else 'Unknown',
+                        'customer_gstin': customer.gstin if customer else '',
+                        'total_amount': invoice.total_amount or 0
+                    })
     
     return render_template('gst/gstr1.html', 
                          gst_data=gst_data,
@@ -115,33 +155,40 @@ def gstr3b():
     year = request.args.get('year', datetime.now().year, type=int)
     
     # Get invoices for the specified month
-    invoices = Invoice.query.filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == month,
-        extract('year', Invoice.invoice_date) == year,
-        Invoice.status == 'paid'
-    ).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find({
+        'user_id': user_id_obj,
+        'status': 'paid',
+        '$expr': {
+            '$and': [
+                {'$eq': [{'$month': '$invoice_date'}, month]},
+                {'$eq': [{'$year': '$invoice_date'}, year]}
+            ]
+        }
+    })]
     
     # Calculate totals
-    total_taxable_value = sum(invoice.subtotal for invoice in invoices)
-    total_cgst = sum(invoice.cgst_amount for invoice in invoices)
-    total_sgst = sum(invoice.sgst_amount for invoice in invoices)
-    total_igst = sum(invoice.igst_amount for invoice in invoices)
+    total_taxable_value = sum(invoice.subtotal or 0 for invoice in invoices)
+    total_cgst = sum(invoice.cgst_amount or 0 for invoice in invoices)
+    total_sgst = sum(invoice.sgst_amount or 0 for invoice in invoices)
+    total_igst = sum(invoice.igst_amount or 0 for invoice in invoices)
     total_gst = total_cgst + total_sgst + total_igst
     
     # Group by GST rate
     gst_by_rate = {}
     for invoice in invoices:
-        for item in invoice.items:
-            rate = item.gst_rate
-            if rate not in gst_by_rate:
-                gst_by_rate[rate] = {
-                    'taxable_value': 0,
-                    'gst_amount': 0
-                }
-            
-            gst_by_rate[rate]['taxable_value'] += item.total
-            gst_by_rate[rate]['gst_amount'] += item.gst_amount
+        invoice_items = invoice.items if invoice.items else []
+        for item_data in invoice_items:
+            if isinstance(item_data, dict):
+                rate = item_data.get('gst_rate', 0)
+                if rate not in gst_by_rate:
+                    gst_by_rate[rate] = {
+                        'taxable_value': 0,
+                        'gst_amount': 0
+                    }
+                
+                gst_by_rate[rate]['taxable_value'] += item_data.get('total', 0)
+                gst_by_rate[rate]['gst_amount'] += item_data.get('gst_amount', 0)
     
     return render_template('gst/gstr3b.html',
                          invoices=invoices,
@@ -159,9 +206,10 @@ def gstr3b():
 @login_required
 def reports():
     """List all GST reports"""
-    reports = GSTReport.query.filter_by(
-        user_id=current_user.id
-    ).order_by(GSTReport.created_at.desc()).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    reports = [GSTReport.from_dict(doc) for doc in db['gst_reports'].find(
+        {'user_id': user_id_obj}
+    ).sort('created_at', -1)]
     
     return render_template('gst/reports.html', reports=reports)
 
@@ -178,48 +226,54 @@ def generate_report():
         return redirect(url_for('gst.reports'))
     
     # Check if report already exists
-    existing_report = GSTReport.query.filter_by(
-        user_id=current_user.id,
-        report_type=report_type,
-        period_month=month,
-        period_year=year
-    ).first()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    existing_report_doc = db['gst_reports'].find_one({
+        'user_id': user_id_obj,
+        'report_type': report_type,
+        'period_month': month,
+        'period_year': year
+    })
     
-    if existing_report:
+    if existing_report_doc:
         flash('Report for this period already exists', 'error')
         return redirect(url_for('gst.reports'))
     
     # Get invoices for the period
-    invoices = Invoice.query.filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == month,
-        extract('year', Invoice.invoice_date) == year,
-        Invoice.status == 'paid'
-    ).all()
+    invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find({
+        'user_id': user_id_obj,
+        'status': 'paid',
+        '$expr': {
+            '$and': [
+                {'$eq': [{'$month': '$invoice_date'}, month]},
+                {'$eq': [{'$year': '$invoice_date'}, year]}
+            ]
+        }
+    })]
     
     # Calculate totals
-    total_taxable_value = sum(invoice.subtotal for invoice in invoices)
-    total_cgst = sum(invoice.cgst_amount for invoice in invoices)
-    total_sgst = sum(invoice.sgst_amount for invoice in invoices)
-    total_igst = sum(invoice.igst_amount for invoice in invoices)
+    total_taxable_value = sum(invoice.subtotal or 0 for invoice in invoices)
+    total_cgst = sum(invoice.cgst_amount or 0 for invoice in invoices)
+    total_sgst = sum(invoice.sgst_amount or 0 for invoice in invoices)
+    total_igst = sum(invoice.igst_amount or 0 for invoice in invoices)
     
     # Prepare report data
+    from models import Customer
     report_data = {
-        'invoices': [
-            {
-                'invoice_number': invoice.invoice_number,
-                'invoice_date': invoice.invoice_date.strftime('%Y-%m-%d'),
-                'customer_name': invoice.customer.name,
-                'customer_gstin': invoice.customer.gstin,
-                'subtotal': float(invoice.subtotal),
-                'cgst': float(invoice.cgst_amount),
-                'sgst': float(invoice.sgst_amount),
-                'igst': float(invoice.igst_amount),
-                'total': float(invoice.total_amount)
-            }
-            for invoice in invoices
-        ]
+        'invoices': []
     }
+    for invoice in invoices:
+        customer = Customer.find_by_id(invoice.customer_id)
+        report_data['invoices'].append({
+            'invoice_number': invoice.invoice_number,
+            'invoice_date': invoice.invoice_date.strftime('%Y-%m-%d') if invoice.invoice_date else '',
+            'customer_name': customer.name if customer else 'Unknown',
+            'customer_gstin': customer.gstin if customer else '',
+            'subtotal': float(invoice.subtotal or 0),
+            'cgst': float(invoice.cgst_amount or 0),
+            'sgst': float(invoice.sgst_amount or 0),
+            'igst': float(invoice.igst_amount or 0),
+            'total': float(invoice.total_amount or 0)
+        })
     
     # Create report record
     report = GSTReport(
@@ -234,8 +288,7 @@ def generate_report():
         report_data=report_data
     )
     
-    db.session.add(report)
-    db.session.commit()
+    report.save()
     
     flash(f'{report_type} report generated successfully!', 'success')
     return redirect(url_for('gst.reports'))
@@ -244,9 +297,10 @@ def generate_report():
 @login_required
 def show_report(id):
     """Show GST report details"""
-    report = GSTReport.query.filter_by(
-        id=id, user_id=current_user.id
-    ).first_or_404()
+    report = GSTReport.find_by_id(id)
+    if not report or str(report.user_id) != str(current_user.id):
+        from flask import abort
+        abort(404)
     
     return render_template('gst/show_report.html', report=report)
 
@@ -254,9 +308,10 @@ def show_report(id):
 @login_required
 def download_report_pdf(id):
     """Download GST report as PDF"""
-    report = GSTReport.query.filter_by(
-        id=id, user_id=current_user.id
-    ).first_or_404()
+    report = GSTReport.find_by_id(id)
+    if not report or str(report.user_id) != str(current_user.id):
+        from flask import abort
+        abort(404)
     
     # Generate PDF
     pdf_path = generate_gst_report_pdf(report)
@@ -272,12 +327,13 @@ def download_report_pdf(id):
 @login_required
 def delete_report(id):
     """Delete GST report"""
-    report = GSTReport.query.filter_by(
-        id=id, user_id=current_user.id
-    ).first_or_404()
+    report = GSTReport.find_by_id(id)
+    if not report or str(report.user_id) != str(current_user.id):
+        from flask import abort
+        abort(404)
     
-    db.session.delete(report)
-    db.session.commit()
+    report_id_obj = ObjectId(id) if isinstance(id, str) else id
+    db['gst_reports'].delete_one({'_id': report_id_obj})
     
     flash('Report deleted successfully!', 'success')
     return redirect(url_for('gst.reports'))
@@ -290,24 +346,37 @@ def gst_summary():
     year = request.args.get('year', datetime.now().year, type=int)
     
     # Get GST summary for the specified month
-    summary = db.session.query(
-        func.sum(Invoice.subtotal).label('total_taxable_value'),
-        func.sum(Invoice.cgst_amount).label('total_cgst'),
-        func.sum(Invoice.sgst_amount).label('total_sgst'),
-        func.sum(Invoice.igst_amount).label('total_igst'),
-        func.count(Invoice.id).label('total_invoices')
-    ).filter(
-        Invoice.user_id == current_user.id,
-        extract('month', Invoice.invoice_date) == month,
-        extract('year', Invoice.invoice_date) == year,
-        Invoice.status == 'paid'
-    ).first()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    summary_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'status': 'paid',
+            '$expr': {
+                '$and': [
+                    {'$eq': [{'$month': '$invoice_date'}, month]},
+                    {'$eq': [{'$year': '$invoice_date'}, year]}
+                ]
+            }
+        }},
+        {'$group': {
+            '_id': None,
+            'total_taxable_value': {'$sum': '$subtotal'},
+            'total_cgst': {'$sum': '$cgst_amount'},
+            'total_sgst': {'$sum': '$sgst_amount'},
+            'total_igst': {'$sum': '$igst_amount'},
+            'total_invoices': {'$sum': 1}
+        }}
+    ]
+    summary_result = list(db['invoices'].aggregate(summary_pipeline))
+    summary = summary_result[0] if summary_result else {
+        'total_taxable_value': 0, 'total_cgst': 0, 'total_sgst': 0, 'total_igst': 0, 'total_invoices': 0
+    }
     
     return jsonify({
-        'total_taxable_value': float(summary.total_taxable_value or 0),
-        'total_cgst': float(summary.total_cgst or 0),
-        'total_sgst': float(summary.total_sgst or 0),
-        'total_igst': float(summary.total_igst or 0),
-        'total_invoices': summary.total_invoices or 0
+        'total_taxable_value': float(summary.get('total_taxable_value', 0) or 0),
+        'total_cgst': float(summary.get('total_cgst', 0) or 0),
+        'total_sgst': float(summary.get('total_sgst', 0) or 0),
+        'total_igst': float(summary.get('total_igst', 0) or 0),
+        'total_invoices': summary.get('total_invoices', 0) or 0
     })
 

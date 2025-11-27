@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_login import login_required, current_user
-from models import db, Order, OrderItem, Customer, Product, Invoice, InvoiceItem
+from models import Order, OrderItem, Customer, Product, Invoice, InvoiceItem
+from database import db
+from bson import ObjectId
 from datetime import datetime, timedelta
-from sqlalchemy import func, extract, and_
 from collections import defaultdict
 from io import BytesIO
 try:
@@ -32,41 +33,48 @@ def sales_summary():
         start_date = datetime.now() - timedelta(days=days)
         
         # Total revenue from orders
-        total_revenue = db.session.query(func.sum(Order.total_amount)).filter(
-            Order.created_at >= start_date
-        ).scalar() or 0.0
+        revenue_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
+        ]
+        revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+        total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
         
         # Total orders
-        total_orders = Order.query.filter(
-            Order.created_at >= start_date
-        ).count()
+        total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
         
         # Total customers
-        total_customers = Customer.query.count()
+        total_customers = db['customers'].count_documents({})
         
         # Active customers (placed orders in period)
-        active_customers = db.session.query(func.count(func.distinct(Order.customer_id))).filter(
-            Order.created_at >= start_date
-        ).scalar() or 0
+        active_customers_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$group': {'_id': '$customer_id'}},
+            {'$count': 'active_customers'}
+        ]
+        active_result = list(db['orders'].aggregate(active_customers_pipeline))
+        active_customers = active_result[0].get('active_customers', 0) if active_result else 0
         
         # Average order value
         avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
         
         # Orders by status
-        orders_by_status = db.session.query(
-            Order.status,
-            func.count(Order.id),
-            func.sum(Order.total_amount)
-        ).filter(
-            Order.created_at >= start_date
-        ).group_by(Order.status).all()
+        orders_by_status_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$group': {
+                '_id': '$status',
+                'count': {'$sum': 1},
+                'revenue': {'$sum': '$total_amount'}
+            }}
+        ]
+        orders_by_status = list(db['orders'].aggregate(orders_by_status_pipeline))
         
         status_breakdown = {
-            status: {
-                'count': count,
-                'revenue': float(revenue or 0)
+            item['_id']: {
+                'count': item.get('count', 0),
+                'revenue': float(item.get('revenue', 0))
             }
-            for status, count, revenue in orders_by_status
+            for item in orders_by_status
         }
         
         return jsonify({
@@ -92,56 +100,67 @@ def sales_trends():
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        query = Order.query.filter(Order.created_at >= start_date)
-        
         if period == 'daily':
             # Group by day
-            trends = db.session.query(
-                func.date(Order.created_at).label('date'),
-                func.count(Order.id).label('orders'),
-                func.sum(Order.total_amount).label('revenue')
-            ).filter(
-                Order.created_at >= start_date
-            ).group_by(func.date(Order.created_at)).order_by('date').all()
+            trends_pipeline = [
+                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$group': {
+                    '_id': {'$dateToString': {'format': '%Y-%m-%d', 'date': '$created_at'}},
+                    'orders': {'$sum': 1},
+                    'revenue': {'$sum': '$total_amount'}
+                }},
+                {'$sort': {'_id': 1}}
+            ]
+            trends = list(db['orders'].aggregate(trends_pipeline))
             
             data = [{
-                'date': str(trend.date),
-                'orders': trend.orders,
-                'revenue': float(trend.revenue or 0)
+                'date': trend['_id'],
+                'orders': trend.get('orders', 0),
+                'revenue': float(trend.get('revenue', 0))
             } for trend in trends]
             
         elif period == 'weekly':
             # Group by week
-            trends = db.session.query(
-                extract('year', Order.created_at).label('year'),
-                extract('week', Order.created_at).label('week'),
-                func.count(Order.id).label('orders'),
-                func.sum(Order.total_amount).label('revenue')
-            ).filter(
-                Order.created_at >= start_date
-            ).group_by('year', 'week').order_by('year', 'week').all()
+            trends_pipeline = [
+                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$group': {
+                    '_id': {
+                        'year': {'$year': '$created_at'},
+                        'week': {'$week': '$created_at'}
+                    },
+                    'orders': {'$sum': 1},
+                    'revenue': {'$sum': '$total_amount'}
+                }},
+                {'$sort': {'_id.year': 1, '_id.week': 1}}
+            ]
+            trends = list(db['orders'].aggregate(trends_pipeline))
             
             data = [{
-                'period': f"Week {trend.week}, {int(trend.year)}",
-                'orders': trend.orders,
-                'revenue': float(trend.revenue or 0)
+                'period': f"Week {trend['_id']['week']}, {trend['_id']['year']}",
+                'orders': trend.get('orders', 0),
+                'revenue': float(trend.get('revenue', 0))
             } for trend in trends]
             
         else:  # monthly
             # Group by month
-            trends = db.session.query(
-                extract('year', Order.created_at).label('year'),
-                extract('month', Order.created_at).label('month'),
-                func.count(Order.id).label('orders'),
-                func.sum(Order.total_amount).label('revenue')
-            ).filter(
-                Order.created_at >= start_date
-            ).group_by('year', 'month').order_by('year', 'month').all()
+            trends_pipeline = [
+                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$group': {
+                    '_id': {
+                        'year': {'$year': '$created_at'},
+                        'month': {'$month': '$created_at'}
+                    },
+                    'orders': {'$sum': 1},
+                    'revenue': {'$sum': '$total_amount'}
+                }},
+                {'$sort': {'_id.year': 1, '_id.month': 1}}
+            ]
+            trends = list(db['orders'].aggregate(trends_pipeline))
             
             data = [{
-                'period': f"{int(trend.month)}/{int(trend.year)}",
-                'orders': trend.orders,
-                'revenue': float(trend.revenue or 0)
+                'period': f"{trend['_id']['month']}/{trend['_id']['year']}",
+                'orders': trend.get('orders', 0),
+                'revenue': float(trend.get('revenue', 0))
             } for trend in trends]
         
         return jsonify({
@@ -161,25 +180,35 @@ def top_customers():
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        top_customers = db.session.query(
-            Customer.id,
-            Customer.name,
-            Customer.email,
-            func.count(Order.id).label('order_count'),
-            func.sum(Order.total_amount).label('total_spent')
-        ).join(Order).filter(
-            Order.created_at >= start_date
-        ).group_by(Customer.id, Customer.name, Customer.email).order_by(
-            func.sum(Order.total_amount).desc()
-        ).limit(limit).all()
+        top_customers_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$group': {
+                '_id': '$customer_id',
+                'order_count': {'$sum': 1},
+                'total_spent': {'$sum': '$total_amount'}
+            }},
+            {'$sort': {'total_spent': -1}},
+            {'$limit': limit},
+            {'$lookup': {
+                'from': 'customers',
+                'localField': '_id',
+                'foreignField': '_id',
+                'as': 'customer'
+            }},
+            {'$unwind': {'path': '$customer', 'preserveNullAndEmptyArrays': True}}
+        ]
+        top_customers = list(db['orders'].aggregate(top_customers_pipeline))
         
-        customers_data = [{
-            'id': customer.id,
-            'name': customer.name,
-            'email': customer.email,
-            'order_count': customer.order_count,
-            'total_spent': float(customer.total_spent or 0)
-        } for customer in top_customers]
+        customers_data = []
+        for item in top_customers:
+            customer = item.get('customer', {})
+            customers_data.append({
+                'id': str(item['_id']),
+                'name': customer.get('name', 'Unknown'),
+                'email': customer.get('email', ''),
+                'order_count': item.get('order_count', 0),
+                'total_spent': float(item.get('total_spent', 0))
+            })
         
         return jsonify({
             'success': True,
@@ -197,25 +226,36 @@ def top_products():
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        top_products = db.session.query(
-            Product.id,
-            Product.name,
-            Product.sku,
-            func.sum(OrderItem.quantity).label('quantity_sold'),
-            func.sum(OrderItem.total).label('revenue')
-        ).join(OrderItem).join(Order).filter(
-            Order.created_at >= start_date
-        ).group_by(Product.id, Product.name, Product.sku).order_by(
-            func.sum(OrderItem.quantity).desc()
-        ).limit(limit).all()
+        top_products_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$unwind': '$items'},
+            {'$group': {
+                '_id': '$items.product_id',
+                'quantity_sold': {'$sum': '$items.quantity'},
+                'revenue': {'$sum': '$items.total'}
+            }},
+            {'$sort': {'quantity_sold': -1}},
+            {'$limit': limit},
+            {'$lookup': {
+                'from': 'products',
+                'localField': '_id',
+                'foreignField': '_id',
+                'as': 'product'
+            }},
+            {'$unwind': {'path': '$product', 'preserveNullAndEmptyArrays': True}}
+        ]
+        top_products = list(db['orders'].aggregate(top_products_pipeline))
         
-        products_data = [{
-            'id': product.id,
-            'name': product.name,
-            'sku': product.sku,
-            'quantity_sold': int(product.quantity_sold or 0),
-            'revenue': float(product.revenue or 0)
-        } for product in top_products]
+        products_data = []
+        for item in top_products:
+            product = item.get('product', {})
+            products_data.append({
+                'id': str(item['_id']),
+                'name': product.get('name', 'Unknown'),
+                'sku': product.get('sku', ''),
+                'quantity_sold': int(item.get('quantity_sold', 0)),
+                'revenue': float(item.get('revenue', 0))
+            })
         
         return jsonify({
             'success': True,
@@ -232,23 +272,36 @@ def revenue_by_category():
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        category_revenue = db.session.query(
-            Product.category,
-            func.sum(OrderItem.total).label('revenue'),
-            func.sum(OrderItem.quantity).label('quantity')
-        ).join(OrderItem).join(Order).filter(
-            Order.created_at >= start_date,
-            Product.category.isnot(None),
-            Product.category != ''
-        ).group_by(Product.category).order_by(
-            func.sum(OrderItem.total).desc()
-        ).all()
+        category_revenue_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$unwind': '$items'},
+            {'$lookup': {
+                'from': 'products',
+                'localField': 'items.product_id',
+                'foreignField': '_id',
+                'as': 'product'
+            }},
+            {'$unwind': {'path': '$product', 'preserveNullAndEmptyArrays': True}},
+            {'$match': {
+                '$or': [
+                    {'product.category': {'$ne': None}},
+                    {'product.category': {'$ne': ''}}
+                ]
+            }},
+            {'$group': {
+                '_id': '$product.category',
+                'revenue': {'$sum': '$items.total'},
+                'quantity': {'$sum': '$items.quantity'}
+            }},
+            {'$sort': {'revenue': -1}}
+        ]
+        category_revenue = list(db['orders'].aggregate(category_revenue_pipeline))
         
         data = [{
-            'category': cat or 'Uncategorized',
-            'revenue': float(revenue or 0),
-            'quantity': int(quantity or 0)
-        } for cat, revenue, quantity in category_revenue]
+            'category': item['_id'] or 'Uncategorized',
+            'revenue': float(item.get('revenue', 0)),
+            'quantity': int(item.get('quantity', 0))
+        } for item in category_revenue]
         
         return jsonify({
             'success': True,
@@ -265,17 +318,20 @@ def customer_growth():
         days = request.args.get('days', 90, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        growth = db.session.query(
-            func.date(Customer.created_at).label('date'),
-            func.count(Customer.id).label('new_customers')
-        ).filter(
-            Customer.created_at >= start_date
-        ).group_by(func.date(Customer.created_at)).order_by('date').all()
+        growth_pipeline = [
+            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$group': {
+                '_id': {'$dateToString': {'format': '%Y-%m-%d', 'date': '$created_at'}},
+                'new_customers': {'$sum': 1}
+            }},
+            {'$sort': {'_id': 1}}
+        ]
+        growth = list(db['customers'].aggregate(growth_pipeline))
         
         data = [{
-            'date': str(g.date),
-            'new_customers': g.new_customers
-        } for g in growth]
+            'date': item['_id'],
+            'new_customers': item.get('new_customers', 0)
+        } for item in growth]
         
         return jsonify({
             'success': True,
@@ -302,14 +358,23 @@ def download_report():
                 ws.title = "Sales Summary"
                 
                 # Get summary data
-                total_revenue = db.session.query(func.sum(Order.total_amount)).filter(
-                    Order.created_at >= start_date
-                ).scalar() or 0.0
-                total_orders = Order.query.filter(Order.created_at >= start_date).count()
-                total_customers = Customer.query.count()
-                active_customers = db.session.query(func.count(func.distinct(Order.customer_id))).filter(
-                    Order.created_at >= start_date
-                ).scalar() or 0
+                revenue_pipeline = [
+                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
+                ]
+                revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+                total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
+                
+                total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
+                total_customers = db['customers'].count_documents({})
+                
+                active_customers_pipeline = [
+                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$group': {'_id': '$customer_id'}},
+                    {'$count': 'active_customers'}
+                ]
+                active_result = list(db['orders'].aggregate(active_customers_pipeline))
+                active_customers = active_result[0].get('active_customers', 0) if active_result else 0
                 
                 # Write summary
                 ws['A1'] = 'Sales Summary Report'
@@ -336,13 +401,24 @@ def download_report():
                 ws.title = "Top Customers"
                 
                 limit = request.args.get('limit', 50, type=int)
-                top = db.session.query(
-                    Customer.id, Customer.name, Customer.email,
-                    func.count(Order.id).label('order_count'),
-                    func.sum(Order.total_amount).label('total_spent')
-                ).join(Order).filter(Order.created_at >= start_date).group_by(
-                    Customer.id, Customer.name, Customer.email
-                ).order_by(func.sum(Order.total_amount).desc()).limit(limit).all()
+                top_pipeline = [
+                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$group': {
+                        '_id': '$customer_id',
+                        'order_count': {'$sum': 1},
+                        'total_spent': {'$sum': '$total_amount'}
+                    }},
+                    {'$sort': {'total_spent': -1}},
+                    {'$limit': limit},
+                    {'$lookup': {
+                        'from': 'customers',
+                        'localField': '_id',
+                        'foreignField': '_id',
+                        'as': 'customer'
+                    }},
+                    {'$unwind': {'path': '$customer', 'preserveNullAndEmptyArrays': True}}
+                ]
+                top = list(db['orders'].aggregate(top_pipeline))
                 
                 headers = ['Rank', 'Customer Name', 'Email', 'Orders', 'Total Spent']
                 for col_num, header in enumerate(headers, 1):
@@ -351,27 +427,38 @@ def download_report():
                     cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
                     cell.font = Font(bold=True, color="FFFFFF")
                 
-                for row_num, customer in enumerate(top, 2):
+                for row_num, item in enumerate(top, 2):
+                    customer = item.get('customer', {})
                     ws.cell(row=row_num, column=1, value=row_num - 1)
-                    ws.cell(row=row_num, column=2, value=customer.name)
-                    ws.cell(row=row_num, column=3, value=customer.email)
-                    ws.cell(row=row_num, column=4, value=customer.order_count)
-                    ws.cell(row=row_num, column=5, value=float(customer.total_spent or 0))
+                    ws.cell(row=row_num, column=2, value=customer.get('name', 'Unknown'))
+                    ws.cell(row=row_num, column=3, value=customer.get('email', ''))
+                    ws.cell(row=row_num, column=4, value=item.get('order_count', 0))
+                    ws.cell(row=row_num, column=5, value=float(item.get('total_spent', 0)))
                     
             elif report_type == 'products':
                 ws = wb.active
                 ws.title = "Top Products"
                 
                 limit = request.args.get('limit', 50, type=int)
-                top = db.session.query(
-                    Product.id, Product.name, Product.sku,
-                    func.sum(OrderItem.quantity).label('quantity_sold'),
-                    func.sum(OrderItem.total).label('revenue')
-                ).join(OrderItem).join(Order).filter(
-                    Order.created_at >= start_date
-                ).group_by(Product.id, Product.name, Product.sku).order_by(
-                    func.sum(OrderItem.quantity).desc()
-                ).limit(limit).all()
+                top_pipeline = [
+                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$unwind': '$items'},
+                    {'$group': {
+                        '_id': '$items.product_id',
+                        'quantity_sold': {'$sum': '$items.quantity'},
+                        'revenue': {'$sum': '$items.total'}
+                    }},
+                    {'$sort': {'quantity_sold': -1}},
+                    {'$limit': limit},
+                    {'$lookup': {
+                        'from': 'products',
+                        'localField': '_id',
+                        'foreignField': '_id',
+                        'as': 'product'
+                    }},
+                    {'$unwind': {'path': '$product', 'preserveNullAndEmptyArrays': True}}
+                ]
+                top = list(db['orders'].aggregate(top_pipeline))
                 
                 headers = ['Rank', 'Product Name', 'SKU', 'Quantity Sold', 'Revenue']
                 for col_num, header in enumerate(headers, 1):
@@ -380,12 +467,13 @@ def download_report():
                     cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
                     cell.font = Font(bold=True, color="FFFFFF")
                 
-                for row_num, product in enumerate(top, 2):
+                for row_num, item in enumerate(top, 2):
+                    product = item.get('product', {})
                     ws.cell(row=row_num, column=1, value=row_num - 1)
-                    ws.cell(row=row_num, column=2, value=product.name)
-                    ws.cell(row=row_num, column=3, value=product.sku)
-                    ws.cell(row=row_num, column=4, value=int(product.quantity_sold or 0))
-                    ws.cell(row=row_num, column=5, value=float(product.revenue or 0))
+                    ws.cell(row=row_num, column=2, value=product.get('name', 'Unknown'))
+                    ws.cell(row=row_num, column=3, value=product.get('sku', ''))
+                    ws.cell(row=row_num, column=4, value=int(item.get('quantity_sold', 0)))
+                    ws.cell(row=row_num, column=5, value=float(item.get('revenue', 0)))
             
             # Auto-adjust column widths
             for column in ws.columns:
@@ -424,10 +512,14 @@ def download_report():
                 elements.append(Spacer(1, 12))
                 
                 # Get summary data
-                total_revenue = db.session.query(func.sum(Order.total_amount)).filter(
-                    Order.created_at >= start_date
-                ).scalar() or 0.0
-                total_orders = Order.query.filter(Order.created_at >= start_date).count()
+                revenue_pipeline = [
+                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
+                ]
+                revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+                total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
+                
+                total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
                 
                 # Summary table
                 data = [['Metric', 'Value']]

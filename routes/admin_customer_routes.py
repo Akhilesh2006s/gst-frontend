@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
-from models import db, Customer
+from models import Customer
+from database import db
+from bson import ObjectId
 from forms import CustomerForm
-from sqlalchemy import or_
 
 admin_customer_bp = Blueprint('admin_customer', __name__)
 
@@ -14,21 +15,34 @@ def get_customers():
         page = request.args.get('page', 1, type=int)
         search = request.args.get('search', '')
         
-        query = Customer.query.filter_by(user_id=current_user.id, is_active=True)
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        query = {'user_id': user_id_obj, 'is_active': True}
         
         if search:
-            query = query.filter(
-                or_(
-                    Customer.name.ilike(f'%{search}%'),
-                    Customer.gstin.ilike(f'%{search}%'),
-                    Customer.email.ilike(f'%{search}%'),
-                    Customer.phone.ilike(f'%{search}%')
-                )
-            )
+            query['$or'] = [
+                {'name': {'$regex': search, '$options': 'i'}},
+                {'gstin': {'$regex': search, '$options': 'i'}},
+                {'email': {'$regex': search, '$options': 'i'}},
+                {'phone': {'$regex': search, '$options': 'i'}}
+            ]
         
-        customers = query.order_by(Customer.name).paginate(
-            page=page, per_page=20, error_out=False
-        )
+        # Manual pagination for MongoDB
+        skip = (page - 1) * 20
+        all_customers = [Customer.from_dict(doc) for doc in db['customers'].find(query).sort('name', 1).skip(skip).limit(20)]
+        total_count = db['customers'].count_documents(query)
+        
+        # Create pagination-like object
+        class Pagination:
+            def __init__(self, items, page, per_page, total):
+                self.items = items
+                self.page = page
+                self.per_page = per_page
+                self.total = total
+                self.pages = (total + per_page - 1) // per_page
+                self.has_prev = page > 1
+                self.has_next = page < self.pages
+        
+        customers = Pagination(all_customers, page, 20, total_count)
         
         customer_list = []
         for customer in customers.items:
@@ -68,7 +82,7 @@ def create_customer():
         data = request.get_json()
         
         # Check if email already exists
-        if Customer.query.filter_by(email=data['email']).first():
+        if Customer.find_by_email(data['email']):
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
         customer = Customer(
@@ -87,8 +101,7 @@ def create_customer():
         if data.get('password'):
             customer.set_password(data['password'])
         
-        db.session.add(customer)
-        db.session.commit()
+        customer.save()
         
         return jsonify({
             'success': True,
@@ -102,7 +115,6 @@ def create_customer():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @admin_customer_bp.route('/customers/<int:customer_id>')
@@ -110,9 +122,11 @@ def create_customer():
 def get_customer(customer_id):
     """Get specific customer details"""
     try:
-        customer = Customer.query.filter_by(
-            id=customer_id, user_id=current_user.id, is_active=True
-        ).first()
+        customer = Customer.find_by_id(customer_id)
+        if customer and str(customer.user_id) != str(current_user.id):
+            customer = None
+        if customer and not customer.is_active:
+            customer = None
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
@@ -142,9 +156,11 @@ def get_customer(customer_id):
 def update_customer(customer_id):
     """Update customer"""
     try:
-        customer = Customer.query.filter_by(
-            id=customer_id, user_id=current_user.id, is_active=True
-        ).first()
+        customer = Customer.find_by_id(customer_id)
+        if customer and str(customer.user_id) != str(current_user.id):
+            customer = None
+        if customer and not customer.is_active:
+            customer = None
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
@@ -153,7 +169,7 @@ def update_customer(customer_id):
         
         # Check if email is changed and already exists
         if data.get('email') and data['email'] != customer.email:
-            if Customer.query.filter_by(email=data['email']).first():
+            if Customer.find_by_email(data['email']):
                 return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
         # Update customer data
@@ -170,7 +186,7 @@ def update_customer(customer_id):
         if data.get('password'):
             customer.set_password(data['password'])
         
-        db.session.commit()
+        customer.save()
         
         return jsonify({
             'success': True,
@@ -184,7 +200,6 @@ def update_customer(customer_id):
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @admin_customer_bp.route('/customers/<int:customer_id>', methods=['DELETE'])
@@ -192,24 +207,27 @@ def update_customer(customer_id):
 def delete_customer(customer_id):
     """Delete customer (soft delete)"""
     try:
-        customer = Customer.query.filter_by(
-            id=customer_id, user_id=current_user.id, is_active=True
-        ).first()
+        customer = Customer.find_by_id(customer_id)
+        if customer and str(customer.user_id) != str(current_user.id):
+            customer = None
+        if customer and not customer.is_active:
+            customer = None
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
         
         # Check if customer has orders
-        if customer.orders:
+        customer_id_obj = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
+        order_count = db['orders'].count_documents({'customer_id': customer_id_obj})
+        if order_count > 0:
             return jsonify({'success': False, 'message': 'Cannot delete customer with existing orders'}), 400
         
         customer.is_active = False
-        db.session.commit()
+        customer.save()
         
         return jsonify({'success': True, 'message': 'Customer deleted successfully!'})
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @admin_customer_bp.route('/customers/search')
@@ -222,15 +240,16 @@ def search_customers():
         if len(search_term) < 2:
             return jsonify({'success': True, 'customers': []})
         
-        customers = Customer.query.filter(
-            Customer.user_id == current_user.id,
-            Customer.is_active == True,
-            or_(
-                Customer.name.ilike(f'%{search_term}%'),
-                Customer.gstin.ilike(f'%{search_term}%'),
-                Customer.phone.ilike(f'%{search_term}%')
-            )
-        ).limit(10).all()
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        customers = [Customer.from_dict(doc) for doc in db['customers'].find({
+            'user_id': user_id_obj,
+            'is_active': True,
+            '$or': [
+                {'name': {'$regex': search_term, '$options': 'i'}},
+                {'gstin': {'$regex': search_term, '$options': 'i'}},
+                {'phone': {'$regex': search_term, '$options': 'i'}}
+            ]
+        }).limit(10)]
         
         results = []
         for customer in customers:

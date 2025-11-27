@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify, session
 from flask_login import login_user, logout_user, login_required, current_user
-from models import db, Customer, User, Product, CustomerProductPrice, Order, OrderItem, Invoice, InvoiceItem
+from models import Customer, User, Product, CustomerProductPrice, Order, OrderItem, Invoice, InvoiceItem
 from forms import CustomerRegistrationForm, CustomerLoginForm, ForgotPasswordForm, ResetPasswordForm
-from sqlalchemy import or_
+from database import db
+from bson import ObjectId
 from datetime import datetime
 import uuid
 import re
@@ -18,12 +19,16 @@ def register():
         data = request.get_json()
         
         # Check if email already exists
-        if Customer.query.filter_by(email=data['email']).first():
+        if Customer.find_by_email(data['email']):
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
-        # Create new customer (assuming admin user_id = 1 for now)
+        # Get first admin user as default (or handle differently)
+        admin_users = [User.from_dict(doc) for doc in db['users'].find().limit(1)]
+        default_user_id = admin_users[0].id if admin_users else None
+        
+        # Create new customer
         customer = Customer(
-            user_id=1,  # Default admin user
+            user_id=default_user_id,
             name=data['name'],
             email=data['email'],
             phone=data['phone'],
@@ -34,9 +39,7 @@ def register():
             pincode=data['pincode']
         )
         customer.set_password(data['password'])
-        
-        db.session.add(customer)
-        db.session.commit()
+        customer.save()
         
         return jsonify({
             'success': True,
@@ -49,7 +52,6 @@ def register():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @customer_auth_bp.route('/login', methods=['POST'])
@@ -58,7 +60,7 @@ def login():
     try:
         data = request.get_json()
         
-        customer = Customer.query.filter_by(email=data['email']).first()
+        customer = Customer.find_by_email(data['email'])
         if customer and customer.check_password(data['password']):
             login_user(customer, remember=data.get('remember_me', False))
             session.permanent = True
@@ -92,7 +94,7 @@ def forgot_password():
         data = request.get_json()
         email = data['email']
         
-        customer = Customer.query.filter_by(email=email).first()
+        customer = Customer.find_by_email(email)
         if not customer:
             return jsonify({'success': False, 'message': 'Email not found'}), 404
         
@@ -124,14 +126,14 @@ def reset_password():
             return jsonify({'success': False, 'message': 'Invalid reset token'}), 400
         
         email = session.get('reset_email')
-        customer = Customer.query.filter_by(email=email).first()
+        customer = Customer.find_by_email(email)
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
         
         # Update password
         customer.set_password(new_password)
-        db.session.commit()
+        customer.save()
         
         # Clear session
         session.pop('reset_token', None)
@@ -140,7 +142,6 @@ def reset_password():
         return jsonify({'success': True, 'message': 'Password reset successful'})
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @customer_auth_bp.route('/profile')
@@ -174,36 +175,34 @@ def get_customer_products():
         search = request.args.get('search', '').strip()
         
         # Get the admin user_id that this customer belongs to
-        customer = Customer.query.get(customer_id)
+        customer = Customer.find_by_id(customer_id)
         if not customer:
             return jsonify({'success': False, 'error': 'Customer not found'}), 404
         
         admin_user_id = customer.user_id
         
         # Query products for this admin
-        query = Product.query.filter_by(user_id=admin_user_id, is_active=True)
+        query = {
+            'user_id': ObjectId(admin_user_id) if isinstance(admin_user_id, str) else admin_user_id,
+            'is_active': True
+        }
         
         # Apply search filter if provided
         if search:
-            query = query.filter(
-                or_(
-                    Product.name.contains(search),
-                    Product.sku.contains(search),
-                    Product.description.contains(search)
-                )
-            )
+            query['$or'] = [
+                {'name': {'$regex': search, '$options': 'i'}},
+                {'sku': {'$regex': search, '$options': 'i'}},
+                {'description': {'$regex': search, '$options': 'i'}}
+            ]
         
-        products = query.order_by(Product.name).all()
+        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
         
         # Return products with customer-specific prices
         products_data = []
         for product in products:
             try:
                 # Get customer-specific price if available
-                customer_price = CustomerProductPrice.query.filter_by(
-                    customer_id=customer_id,
-                    product_id=product.id
-                ).first()
+                customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id, product.id)
                 
                 # Use customer-specific price if available, otherwise use default price
                 price = float(customer_price.price) if customer_price else float(product.price or 0)
@@ -248,23 +247,30 @@ def get_customer_orders():
         # Check if current_user is a Customer by checking for user_id attribute (only Customer has this)
         if not hasattr(current_user, 'user_id'):
             # Try to verify by querying the database
-            customer = Customer.query.get(current_user.id)
+            customer = Customer.find_by_id(current_user.id)
             if not customer:
                 return jsonify({'success': False, 'error': 'Invalid user type'}), 403
             customer_id = customer.id
         else:
             customer_id = current_user.id
-        orders = Order.query.filter_by(customer_id=customer_id).order_by(Order.created_at.desc()).all()
+        
+        orders = [Order.from_dict(doc) for doc in db['orders'].find(
+            {'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id}
+        ).sort('created_at', -1)]
         orders_data = []
         
         for order in orders:
             # Get order items
             items_data = []
-            for item in order.items:
+            order_items = [OrderItem.from_dict(doc) for doc in db['order_items'].find(
+                {'order_id': ObjectId(order.id) if isinstance(order.id, str) else order.id}
+            )]
+            for item in order_items:
+                product = Product.find_by_id(item.product_id)
                 items_data.append({
                     'id': item.id,
                     'product_id': item.product_id,
-                    'product_name': item.product.name if item.product else 'Unknown Product',
+                    'product_name': product.name if product else 'Unknown Product',
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
                     'total': float(item.total)
@@ -300,7 +306,7 @@ def create_customer_order():
         # Check if current_user is a Customer by checking for user_id attribute (only Customer has this)
         if not hasattr(current_user, 'user_id'):
             # Try to verify by querying the database
-            customer = Customer.query.get(current_user.id)
+            customer = Customer.find_by_id(current_user.id)
             if not customer:
                 return jsonify({'success': False, 'error': 'Invalid user type'}), 403
             customer_id = customer.id
@@ -321,19 +327,18 @@ def create_customer_order():
             total_amount=data.get('total_amount', 0),
             notes=data.get('notes', '')
         )
-        
-        db.session.add(order)
-        db.session.flush()  # Get order ID
+        order.save()
         
         # Add order items
         items = data.get('items', [])
+        order_items_list = []
         for item_data in items:
             product_id = item_data.get('product_id')
             if not product_id:
                 continue
             
             # Get product details
-            product = Product.query.get(product_id)
+            product = Product.find_by_id(product_id)
             if not product:
                 continue
             
@@ -344,9 +349,13 @@ def create_customer_order():
                 unit_price=item_data.get('unit_price', 0),
                 total=item_data.get('quantity', 0) * item_data.get('unit_price', 0)
             )
-            db.session.add(order_item)
+            order_item.save()
+            order_items_list.append(order_item)
         
-        db.session.commit()
+        # Update order with items
+        order.items = [item.to_dict() for item in order_items_list]
+        order.calculate_totals()
+        order.save()
         
         return jsonify({
             'success': True,
@@ -358,7 +367,6 @@ def create_customer_order():
         })
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error creating customer order: {str(e)}")
         import traceback
         traceback.print_exc()
@@ -375,29 +383,35 @@ def get_customer_invoices():
         # Check if current_user is a Customer by checking for user_id attribute (only Customer has this)
         if not hasattr(current_user, 'user_id'):
             # Try to verify by querying the database
-            customer = Customer.query.get(current_user.id)
+            customer = Customer.find_by_id(current_user.id)
             if not customer:
                 return jsonify({'success': False, 'error': 'Invalid user type'}), 403
             customer_id = customer.id
         else:
             customer_id = current_user.id
-        invoices = Invoice.query.filter_by(customer_id=customer_id).order_by(Invoice.created_at.desc()).all()
+        
+        invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(
+            {'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id}
+        ).sort('created_at', -1)]
         invoices_data = []
         
         for invoice in invoices:
             # Get invoice items
             items_data = []
-            for item in invoice.items:
-                items_data.append({
-                    'id': item.id,
-                    'product_id': item.product_id,
-                    'product_name': item.product.name if item.product else 'Unknown Product',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'gst_rate': float(item.gst_rate) if item.gst_rate else 0,
-                    'gst_amount': float(item.gst_amount) if item.gst_amount else 0,
-                    'total': float(item.total)
-                })
+            invoice_items = invoice.items if invoice.items else []
+            for item_data in invoice_items:
+                if isinstance(item_data, dict):
+                    product = Product.find_by_id(item_data.get('product_id'))
+                    items_data.append({
+                        'id': item_data.get('id'),
+                        'product_id': item_data.get('product_id'),
+                        'product_name': product.name if product else 'Unknown Product',
+                        'quantity': item_data.get('quantity', 0),
+                        'unit_price': float(item_data.get('unit_price', 0)),
+                        'gst_rate': float(item_data.get('gst_rate', 0)),
+                        'gst_amount': float(item_data.get('gst_amount', 0)),
+                        'total': float(item_data.get('total', 0))
+                    })
             
             invoices_data.append({
                 'id': invoice.id,

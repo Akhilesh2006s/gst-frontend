@@ -1,8 +1,9 @@
 from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
 from flask_login import login_required, current_user
-from models import db, Customer, Product, Order, OrderItem
+from models import Customer, Product, Order, OrderItem
+from database import db
+from bson import ObjectId
 from forms import CustomerForm
-from sqlalchemy import or_
 from datetime import datetime
 import uuid
 
@@ -15,21 +16,34 @@ def index():
     page = request.args.get('page', 1, type=int)
     search = request.args.get('search', '')
     
-    query = Customer.query.filter_by(user_id=current_user.id, is_active=True)
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    query = {'user_id': user_id_obj, 'is_active': True}
     
     if search:
-        query = query.filter(
-            or_(
-                Customer.name.contains(search),
-                Customer.gstin.contains(search),
-                Customer.email.contains(search),
-                Customer.phone.contains(search)
-            )
-        )
+        query['$or'] = [
+            {'name': {'$regex': search, '$options': 'i'}},
+            {'gstin': {'$regex': search, '$options': 'i'}},
+            {'email': {'$regex': search, '$options': 'i'}},
+            {'phone': {'$regex': search, '$options': 'i'}}
+        ]
     
-    customers = query.order_by(Customer.name).paginate(
-        page=page, per_page=20, error_out=False
-    )
+    # Manual pagination for MongoDB
+    skip = (page - 1) * 20
+    all_customers = [Customer.from_dict(doc) for doc in db['customers'].find(query).sort('name', 1).skip(skip).limit(20)]
+    total_count = db['customers'].count_documents(query)
+    
+    # Create pagination-like object
+    class Pagination:
+        def __init__(self, items, page, per_page, total):
+            self.items = items
+            self.page = page
+            self.per_page = per_page
+            self.total = total
+            self.pages = (total + per_page - 1) // per_page
+            self.has_prev = page > 1
+            self.has_next = page < self.pages
+    
+    customers = Pagination(all_customers, page, 20, total_count)
     
     return render_template('customers/index.html', customers=customers, search=search)
 
@@ -52,8 +66,7 @@ def new():
             pincode=form.pincode.data
         )
         
-        db.session.add(customer)
-        db.session.commit()
+        customer.save()
         
         flash('Customer created successfully!', 'success')
         return redirect(url_for('customer.index'))
@@ -64,12 +77,17 @@ def new():
 @login_required
 def show(id):
     """Show customer details"""
-    customer = Customer.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    customer = Customer.find_by_id(id)
+    if not customer or str(customer.user_id) != str(current_user.id) or not customer.is_active:
+        from flask import abort
+        abort(404)
     
     # Get customer's invoices
-    invoices = customer.invoices.order_by(customer.invoices[0].created_at.desc()).limit(10).all()
+    from models import Invoice
+    customer_id_obj = ObjectId(customer.id) if isinstance(customer.id, str) else customer.id
+    invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(
+        {'customer_id': customer_id_obj}
+    ).sort('created_at', -1).limit(10)]
     
     return render_template('customers/show.html', customer=customer, invoices=invoices)
 
@@ -77,9 +95,10 @@ def show(id):
 @login_required
 def edit(id):
     """Edit customer"""
-    customer = Customer.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    customer = Customer.find_by_id(id)
+    if not customer or str(customer.user_id) != str(current_user.id) or not customer.is_active:
+        from flask import abort
+        abort(404)
     
     form = CustomerForm(obj=customer)
     
@@ -93,7 +112,7 @@ def edit(id):
         customer.state = form.state.data
         customer.pincode = form.pincode.data
         
-        db.session.commit()
+        customer.save()
         
         flash('Customer updated successfully!', 'success')
         return redirect(url_for('customer.show', id=customer.id))
@@ -104,9 +123,10 @@ def edit(id):
 @login_required
 def delete(id):
     """Delete customer (soft delete)"""
-    customer = Customer.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    customer = Customer.find_by_id(id)
+    if not customer or str(customer.user_id) != str(current_user.id) or not customer.is_active:
+        from flask import abort
+        abort(404)
     
     # Check if customer has invoices
     if customer.invoices:
@@ -114,7 +134,7 @@ def delete(id):
         return redirect(url_for('customer.show', id=customer.id))
     
     customer.is_active = False
-    db.session.commit()
+    customer.save()
     
     flash('Customer deleted successfully!', 'success')
     return redirect(url_for('customer.index'))
@@ -128,15 +148,16 @@ def search():
     if len(search_term) < 2:
         return jsonify([])
     
-    customers = Customer.query.filter(
-        Customer.user_id == current_user.id,
-        Customer.is_active == True,
-        or_(
-            Customer.name.contains(search_term),
-            Customer.gstin.contains(search_term),
-            Customer.phone.contains(search_term)
-        )
-    ).limit(10).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    customers = [Customer.from_dict(doc) for doc in db['customers'].find({
+        'user_id': user_id_obj,
+        'is_active': True,
+        '$or': [
+            {'name': {'$regex': search_term, '$options': 'i'}},
+            {'gstin': {'$regex': search_term, '$options': 'i'}},
+            {'phone': {'$regex': search_term, '$options': 'i'}}
+        ]
+    }).limit(10)]
     
     results = []
     for customer in customers:
@@ -155,9 +176,10 @@ def search():
 @login_required
 def get_customer(id):
     """API endpoint to get customer details"""
-    customer = Customer.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    customer = Customer.find_by_id(id)
+    if not customer or str(customer.user_id) != str(current_user.id) or not customer.is_active:
+        from flask import abort
+        abort(404)
     
     return jsonify({
         'id': customer.id,
@@ -191,14 +213,14 @@ def create_order():
             notes=data.get('notes', '')
         )
         
-        db.session.add(order)
-        db.session.flush()  # Get order ID
+        order.save()
         
         # Add order items
         items = data.get('items', [])
+        order_items_list = []
         for item_data in items:
             # Get product details
-            product = Product.query.get(item_data.get('product_id'))
+            product = Product.find_by_id(item_data.get('product_id'))
             if not product:
                 continue
             
@@ -209,9 +231,12 @@ def create_order():
                 unit_price=item_data.get('unit_price', 0),
                 total=item_data.get('quantity', 0) * item_data.get('unit_price', 0)
             )
-            db.session.add(order_item)
+            order_item.save()
+            order_items_list.append(order_item.to_dict())
         
-        db.session.commit()
+        # Update order with items
+        order.items = order_items_list
+        order.save()
         
         return jsonify({
             'success': True,
@@ -223,7 +248,6 @@ def create_order():
         })
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error creating order: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -232,21 +256,27 @@ def create_order():
 def get_customer_orders():
     """Get all orders for the current customer"""
     try:
-        orders = Order.query.filter_by(customer_id=current_user.id).order_by(Order.created_at.desc()).all()
+        customer_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        orders = [Order.from_dict(doc) for doc in db['orders'].find(
+            {'customer_id': customer_id_obj}
+        ).sort('created_at', -1)]
         orders_data = []
         
         for order in orders:
             # Get order items
             items_data = []
-            for item in order.items:
-                items_data.append({
-                    'id': item.id,
-                    'product_id': item.product_id,
-                    'product_name': item.product.name if item.product else 'Unknown Product',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'total': float(item.total)
-                })
+            order_items = order.items if order.items else []
+            for item_data in order_items:
+                if isinstance(item_data, dict):
+                    product = Product.find_by_id(item_data.get('product_id'))
+                    items_data.append({
+                        'id': item_data.get('id'),
+                        'product_id': item_data.get('product_id'),
+                        'product_name': product.name if product else 'Unknown Product',
+                        'quantity': item_data.get('quantity', 0),
+                        'unit_price': float(item_data.get('unit_price', 0)),
+                        'total': float(item_data.get('total', 0))
+                    })
             
             orders_data.append({
                 'id': order.id,
@@ -272,23 +302,29 @@ def get_customer_invoices():
     try:
         # Get invoices for the current customer
         from models import Invoice, InvoiceItem, Product
-        invoices = Invoice.query.filter_by(customer_id=current_user.id).order_by(Invoice.created_at.desc()).all()
+        customer_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(
+            {'customer_id': customer_id_obj}
+        ).sort('created_at', -1)]
         invoices_data = []
         
         for invoice in invoices:
             # Get invoice items
             items_data = []
-            for item in invoice.items:
-                items_data.append({
-                    'id': item.id,
-                    'product_id': item.product_id,
-                    'product_name': item.product.name if item.product else 'Unknown Product',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'gst_rate': float(item.gst_rate),
-                    'gst_amount': float(item.gst_amount),
-                    'total': float(item.total)
-                })
+            invoice_items = invoice.items if invoice.items else []
+            for item_data in invoice_items:
+                if isinstance(item_data, dict):
+                    product = Product.find_by_id(item_data.get('product_id'))
+                    items_data.append({
+                        'id': item_data.get('id'),
+                        'product_id': item_data.get('product_id'),
+                        'product_name': product.name if product else 'Unknown Product',
+                        'quantity': item_data.get('quantity', 0),
+                        'unit_price': float(item_data.get('unit_price', 0)),
+                        'gst_rate': float(item_data.get('gst_rate', 0)),
+                        'gst_amount': float(item_data.get('gst_amount', 0)),
+                        'total': float(item_data.get('total', 0))
+                    })
             
             invoices_data.append({
                 'id': invoice.id,

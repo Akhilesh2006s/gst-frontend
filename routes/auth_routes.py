@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, flash, redirect, url_for, session, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash
-from models import db, User
+from models import User
 from forms import LoginForm, RegistrationForm, ProfileForm
 import re
 
@@ -21,12 +21,12 @@ def login():
     try:
         data = request.get_json()
         
-        user = User.query.filter_by(email=data['email']).first()
+        user = User.find_by_email(data['email'])
         if user and user.check_password(data['password']):
             # Auto-approve legacy users if needed
             if not user.is_approved:
                 user.is_approved = True
-                db.session.commit()
+                user.save()
             
             login_user(user, remember=data.get('remember_me', False))
             session.permanent = True
@@ -54,10 +54,10 @@ def register():
         data = request.get_json()
         
         # Check if username or email already exists
-        if User.query.filter_by(username=data.get('name', '')).first():
+        if User.find_by_username(data.get('name', '')):
             return jsonify({'success': False, 'message': 'Username already exists'}), 400
         
-        if User.query.filter_by(email=data['email']).first():
+        if User.find_by_email(data['email']):
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
          # Create new admin user (auto-approved)
@@ -75,9 +75,7 @@ def register():
              is_approved=True
         )
         user.set_password(data['password'])
-        
-        db.session.add(user)
-        db.session.commit()
+        user.save()
         
         return jsonify({
             'success': True,
@@ -91,7 +89,6 @@ def register():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @auth_bp.route('/logout', methods=['GET', 'POST'])

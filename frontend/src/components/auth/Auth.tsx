@@ -70,23 +70,44 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
       if (data.success) {
         setSuccess(data.message || 'Login successful!');
-        localStorage.setItem('isAuthenticated', 'true');
-        localStorage.setItem('userType', userType);
-        localStorage.setItem('userData', JSON.stringify(data.user || data.customer));
         
         // Wait a moment for session cookie to be established
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // In development, skip strict session verification due to cross-origin cookie issues
-        // The session will be verified when the dashboard loads
-        const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        // Verify session is established before proceeding
+        let sessionVerified = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const checkEndpoint = userType === 'admin' 
+              ? `${API_BASE_URL}/auth/check`
+              : `${API_BASE_URL}/customer-auth/profile`;
+            
+            const verifyResponse = await fetch(checkEndpoint, {
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            const verifyData = await verifyResponse.json().catch(() => ({ authenticated: false }));
+            console.log(`Session verification attempt ${attempt + 1}:`, verifyData);
+            
+            if (verifyResponse.ok && verifyData.authenticated) {
+              sessionVerified = true;
+              break;
+            } else {
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          } catch (error) {
+            console.error(`Session verification attempt ${attempt + 1} failed:`, error);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
         
-        if (isDevelopment) {
-          // Development: Proceed with login, session will be checked on dashboard
-          console.log('Development mode: Proceeding with login, session will be verified on dashboard');
+        if (sessionVerified) {
+          // Session is established, proceed with login
           onLogin(userType);
-          // Use navigate instead of window.location to avoid full page reload
-          // This ensures React state is preserved
           setTimeout(() => {
             if (userType === 'admin') {
               navigate('/dashboard');
@@ -95,56 +116,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             }
           }, 100);
         } else {
-          // Production: Verify session is established
-          let sessionVerified = false;
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              const checkEndpoint = userType === 'admin' 
-                ? `${API_BASE_URL}/auth/check`
-                : `${API_BASE_URL}/customer-auth/profile`;
-              
-              const verifyResponse = await fetch(checkEndpoint, {
-                credentials: 'include',
-                headers: {
-                  'Content-Type': 'application/json'
-                }
-              });
-              
-              const verifyData = await verifyResponse.json().catch(() => ({ authenticated: false }));
-              console.log(`Session verification attempt ${attempt + 1}:`, verifyData);
-              
-              if (verifyResponse.ok && verifyData.authenticated) {
-                sessionVerified = true;
-                break;
-              } else {
-                // Wait before retry
-                await new Promise(resolve => setTimeout(resolve, 500));
-              }
-            } catch (error) {
-              console.error(`Session verification attempt ${attempt + 1} failed:`, error);
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-          }
-          
-          if (sessionVerified) {
-            // Session is established, proceed with login
-            onLogin(userType);
-            // Use navigate instead of window.location to avoid full page reload
-            setTimeout(() => {
-              if (userType === 'admin') {
-                navigate('/dashboard');
-              } else {
-                navigate('/customer-dashboard');
-              }
-            }, 100);
-          } else {
-            console.error('Session verification failed after multiple attempts');
-            setError('Session establishment failed. Please check your browser settings allow cookies and try again.');
-            localStorage.removeItem('isAuthenticated');
-            localStorage.removeItem('userType');
-            localStorage.removeItem('userData');
-            setLoading(false);
-          }
+          console.error('Session verification failed after multiple attempts');
+          setError('Session establishment failed. Please check your browser settings allow cookies and try again.');
+          setLoading(false);
         }
       } else {
         setError(data.message || 'Login failed');

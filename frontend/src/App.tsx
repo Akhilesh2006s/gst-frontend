@@ -23,27 +23,11 @@ import Reports from './components/reports/Reports';
 import Sales from './components/sales/Sales';
 
 const App: React.FC = () => {
-  // Initialize userType from localStorage immediately to prevent redirect loop
-  const getInitialUserType = (): 'admin' | 'customer' | null => {
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
-    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    
-    if (isAuthenticated && storedUserType) {
-      if (isDevelopment) {
-        // In development, trust localStorage immediately
-        return storedUserType;
-      }
-    }
-    return null;
-  };
-  
-  const [userType, setUserType] = useState<'admin' | 'customer' | null>(getInitialUserType());
+  const [userType, setUserType] = useState<'admin' | 'customer' | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   const handleLogin = (type: 'admin' | 'customer') => {
     setUserType(type);
-    // Store user type in localStorage for persistence
-    localStorage.setItem('userType', type);
   };
 
   const handleLogout = async () => {
@@ -60,77 +44,57 @@ const App: React.FC = () => {
     
     // Clear local state
     setUserType(null);
-    localStorage.removeItem('userType');
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('userData');
   };
 
-  // Check for stored user type on app load - set immediately to prevent redirect loop
+  // Check authentication with backend on app load
   useEffect(() => {
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-    const storedUserType = localStorage.getItem('userType') as 'admin' | 'customer' | null;
-    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    
-    // Set userType immediately from localStorage if available (prevents redirect loop)
-    if (isAuthenticated && storedUserType) {
-      console.log('Setting userType from localStorage:', storedUserType);
-      setUserType(storedUserType);
-      
-      // In development, we're done - don't verify with backend
-      if (isDevelopment) {
-        return;
-      }
-      
-      // In production, verify authentication with backend (but don't clear if it fails immediately)
-      if (!isDevelopment) {
-        // In production, verify authentication with backend
-        const checkEndpoint = storedUserType === 'admin' 
-          ? `${API_BASE_URL}/auth/check`
-          : `${API_BASE_URL}/customer-auth/profile`;
-        
-        fetch(checkEndpoint, {
+    const checkAuth = async () => {
+      try {
+        // Try admin check first
+        const adminCheck = await fetch(`${API_BASE_URL}/auth/check`, {
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json'
           }
-        })
-        .then(async response => {
-          const data = await response.json().catch(() => ({ authenticated: false }));
-          if (response.ok && data.authenticated) {
-            setUserType(storedUserType);
-          } else {
-            // Only clear if we get a clear 401 - don't clear on network errors
-            if (response.status === 401) {
-              console.warn('Auth check failed with 401, clearing local storage');
-              localStorage.removeItem('isAuthenticated');
-              localStorage.removeItem('userType');
-              localStorage.removeItem('userData');
-              setUserType(null);
-            } else {
-              console.warn('Auth check failed but not 401, keeping userType');
-            }
-          }
-        })
-        .catch((error) => {
-          console.error('Auth check error:', error);
-          // Don't clear on network errors - might be temporary
-          // Keep the userType set from localStorage
         });
-      }
-    } else {
-      // Only clear stale data if we're sure user isn't logged in
-      // In development, NEVER clear - might be a timing issue or CORS problem
-      const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      if (!isDevelopment) {
-        // In production, clear stale data
-        localStorage.removeItem('isAuthenticated');
-        localStorage.removeItem('userType');
-        localStorage.removeItem('userData');
+
+        if (adminCheck.ok) {
+          const adminData = await adminCheck.json().catch(() => ({ authenticated: false }));
+          if (adminData.authenticated) {
+            setUserType('admin');
+            setCheckingAuth(false);
+            return;
+          }
+        }
+
+        // Try customer check
+        const customerCheck = await fetch(`${API_BASE_URL}/customer-auth/profile`, {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (customerCheck.ok) {
+          const customerData = await customerCheck.json().catch(() => ({}));
+          if (customerData && !customerData.error) {
+            setUserType('customer');
+            setCheckingAuth(false);
+            return;
+          }
+        }
+
+        // No valid session found
         setUserType(null);
+      } catch (error) {
+        console.error('Auth check error:', error);
+        setUserType(null);
+      } finally {
+        setCheckingAuth(false);
       }
-      // In development, leave localStorage alone - don't clear anything
-      console.log('Development mode: Not clearing localStorage even if empty');
-    }
+    };
+
+    checkAuth();
   }, []);
 
   return (
@@ -169,22 +133,18 @@ const App: React.FC = () => {
           <Route 
             path="/dashboard" 
             element={
-              (() => {
-                const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-                // In development, also check localStorage as fallback
-                if (isDevelopment && !userType) {
-                  const storedUserType = localStorage.getItem('userType');
-                  if (storedUserType === 'admin') {
-                    console.log('Development: Using admin from localStorage for route guard');
-                    return <Dashboard onLogout={handleLogout} />;
-                  }
-                }
-                return userType === 'admin' ? (
-                  <Dashboard onLogout={handleLogout} />
-                ) : (
-                  <Navigate to="/login" />
-                );
-              })()
+              checkingAuth ? (
+                <div className="min-h-screen flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Verifying authentication...</p>
+                  </div>
+                </div>
+              ) : userType === 'admin' ? (
+                <Dashboard onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" />
+              )
             } 
           />
           

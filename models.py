@@ -1,100 +1,251 @@
 from datetime import datetime
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+from bson import ObjectId
 from database import db
 
-class User(UserMixin, db.Model):
-    """User model for business owners"""
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    business_name = db.Column(db.String(200), nullable=False)
-    gst_number = db.Column(db.String(15), unique=True, nullable=False)
-    business_address = db.Column(db.Text, nullable=False)
-    business_phone = db.Column(db.String(15), nullable=False)
-    business_email = db.Column(db.String(120), nullable=False)
-    business_state = db.Column(db.String(50), nullable=False)
-    business_pincode = db.Column(db.String(10), nullable=False)
-    business_reason = db.Column(db.Text, nullable=True)  # Reason for business
-    is_approved = db.Column(db.Boolean, default=False)  # Approval status
-    approved_by = db.Column(db.Integer, db.ForeignKey('super_admin.id'), nullable=True)
-    approved_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_active = db.Column(db.Boolean, default=True)
+class BaseModel:
+    """Base model for MongoDB documents"""
     
-    # Relationships
-    customers = db.relationship('Customer', backref='user', lazy=True, cascade='all, delete-orphan')
-    products = db.relationship(
-        'Product',
-        foreign_keys='Product.user_id',
-        backref='user',
-        lazy=True,
-        cascade='all, delete-orphan'
-    )
-    invoices = db.relationship('Invoice', backref='user', lazy=True, cascade='all, delete-orphan')
+    @staticmethod
+    def to_dict(doc):
+        """Convert MongoDB document to dict, converting ObjectId to string"""
+        if doc is None:
+            return None
+        if isinstance(doc, dict):
+            result = {}
+            for key, value in doc.items():
+                if isinstance(value, ObjectId):
+                    result[key] = str(value)
+                elif isinstance(value, datetime):
+                    result[key] = value.isoformat()
+                elif isinstance(value, dict):
+                    result[key] = BaseModel.to_dict(value)
+                elif isinstance(value, list):
+                    result[key] = [BaseModel.to_dict(item) if isinstance(item, dict) else item for item in value]
+                else:
+                    result[key] = value
+            return result
+        return doc
+    
+    @staticmethod
+    def from_dict(data):
+        """Convert dict to MongoDB document format"""
+        if data is None:
+            return None
+        result = {}
+        for key, value in data.items():
+            if key == '_id' and isinstance(value, str):
+                try:
+                    result[key] = ObjectId(value)
+                except:
+                    result[key] = value
+            elif isinstance(value, dict):
+                result[key] = BaseModel.from_dict(value)
+            elif isinstance(value, list):
+                result[key] = [BaseModel.from_dict(item) if isinstance(item, dict) else item for item in value]
+            else:
+                result[key] = value
+        return result
+
+class User(UserMixin):
+    """User model for business owners"""
+    
+    collection_name = 'users'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.username = kwargs.get('username')
+        self.email = kwargs.get('email')
+        self.password_hash = kwargs.get('password_hash')
+        self.business_name = kwargs.get('business_name')
+        self.gst_number = kwargs.get('gst_number')
+        self.business_address = kwargs.get('business_address')
+        self.business_phone = kwargs.get('business_phone')
+        self.business_email = kwargs.get('business_email')
+        self.business_state = kwargs.get('business_state')
+        self.business_pincode = kwargs.get('business_pincode')
+        self.business_reason = kwargs.get('business_reason')
+        self.is_approved = kwargs.get('is_approved', False)
+        self.approved_by = kwargs.get('approved_by')
+        self.approved_at = kwargs.get('approved_at')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.is_active = kwargs.get('is_active', True)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
     
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'username': self.username,
+            'email': self.email,
+            'password_hash': self.password_hash,
+            'business_name': self.business_name,
+            'gst_number': self.gst_number,
+            'business_address': self.business_address,
+            'business_phone': self.business_phone,
+            'business_email': self.business_email,
+            'business_state': self.business_state,
+            'business_pincode': self.business_pincode,
+            'business_reason': self.business_reason,
+            'is_approved': self.is_approved,
+            'approved_by': ObjectId(self.approved_by) if self.approved_by and isinstance(self.approved_by, str) and ObjectId.is_valid(self.approved_by) else self.approved_by,
+            'approved_at': self.approved_at,
+            'created_at': self.created_at,
+            'is_active': self.is_active
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save user to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, user_id):
+        """Find user by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(user_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
+    
+    @classmethod
+    def find_by_email(cls, email):
+        """Find user by email"""
+        doc = db[cls.collection_name].find_one({'email': email})
+        if doc:
+            return cls.from_dict(doc)
+        return None
+    
+    @classmethod
+    def find_by_username(cls, username):
+        """Find user by username"""
+        doc = db[cls.collection_name].find_one({'username': username})
+        if doc:
+            return cls.from_dict(doc)
+        return None
     
     def __repr__(self):
         return f'<User {self.username}>'
 
-class SuperAdmin(UserMixin, db.Model):
+class SuperAdmin(UserMixin):
     """Super Admin model"""
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    name = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_active = db.Column(db.Boolean, default=True)
     
-    # Relationships
-    approved_users = db.relationship('User', backref='approver', lazy=True)
+    collection_name = 'super_admins'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.email = kwargs.get('email')
+        self.password_hash = kwargs.get('password_hash')
+        self.name = kwargs.get('name')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.is_active = kwargs.get('is_active', True)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
     
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'email': self.email,
+            'password_hash': self.password_hash,
+            'name': self.name,
+            'created_at': self.created_at,
+            'is_active': self.is_active
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save super admin to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, admin_id):
+        """Find super admin by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(admin_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
+    
+    @classmethod
+    def find_by_email(cls, email):
+        """Find super admin by email"""
+        doc = db[cls.collection_name].find_one({'email': email})
+        if doc:
+            return cls.from_dict(doc)
+        return None
     
     def __repr__(self):
         return f'<SuperAdmin {self.name}>'
 
-class Customer(UserMixin, db.Model):
+class Customer(UserMixin):
     """Customer model with login capabilities"""
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    name = db.Column(db.String(200), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    phone = db.Column(db.String(15), nullable=True)
-    gstin = db.Column(db.String(15), nullable=True)
-    company_name = db.Column(db.String(200), nullable=True)
-    billing_address = db.Column(db.Text, nullable=True)
-    shipping_address = db.Column(db.Text, nullable=True)
-    state = db.Column(db.String(50), nullable=True)
-    pincode = db.Column(db.String(10), nullable=True)
-    # Optional banking/financial fields used by various routes
-    bank_name = db.Column(db.String(200), nullable=True)
-    bank_account_number = db.Column(db.String(50), nullable=True)
-    bank_ifsc = db.Column(db.String(20), nullable=True)
-    opening_balance = db.Column(db.Float, nullable=True, default=0.0)
-    opening_balance_type = db.Column(db.String(10), nullable=True, default='debit')
-    credit_limit = db.Column(db.Float, nullable=True, default=0.0)
-    discount = db.Column(db.Float, nullable=True, default=0.0)
-    notes = db.Column(db.Text, nullable=True)
-    tags = db.Column(db.String(500), nullable=True)
-    cc_emails = db.Column(db.String(500), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_active = db.Column(db.Boolean, default=True)
     
-    # Relationships
-    invoices = db.relationship('Invoice', backref='customer', lazy=True)
-    orders = db.relationship('Order', backref='customer', lazy=True)
+    collection_name = 'customers'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.user_id = kwargs.get('user_id')
+        self.name = kwargs.get('name')
+        self.email = kwargs.get('email')
+        self.password_hash = kwargs.get('password_hash')
+        self.phone = kwargs.get('phone')
+        self.gstin = kwargs.get('gstin')
+        self.company_name = kwargs.get('company_name')
+        self.billing_address = kwargs.get('billing_address')
+        self.shipping_address = kwargs.get('shipping_address')
+        self.state = kwargs.get('state')
+        self.pincode = kwargs.get('pincode')
+        self.bank_name = kwargs.get('bank_name')
+        self.bank_account_number = kwargs.get('bank_account_number')
+        self.bank_ifsc = kwargs.get('bank_ifsc')
+        self.opening_balance = kwargs.get('opening_balance', 0.0)
+        self.opening_balance_type = kwargs.get('opening_balance_type', 'debit')
+        self.credit_limit = kwargs.get('credit_limit', 0.0)
+        self.discount = kwargs.get('discount', 0.0)
+        self.notes = kwargs.get('notes')
+        self.tags = kwargs.get('tags')
+        self.cc_emails = kwargs.get('cc_emails')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.is_active = kwargs.get('is_active', True)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -102,207 +253,638 @@ class Customer(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
     
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'user_id': ObjectId(self.user_id) if self.user_id and isinstance(self.user_id, str) and ObjectId.is_valid(self.user_id) else self.user_id,
+            'name': self.name,
+            'email': self.email,
+            'password_hash': self.password_hash,
+            'phone': self.phone,
+            'gstin': self.gstin,
+            'company_name': self.company_name,
+            'billing_address': self.billing_address,
+            'shipping_address': self.shipping_address,
+            'state': self.state,
+            'pincode': self.pincode,
+            'bank_name': self.bank_name,
+            'bank_account_number': self.bank_account_number,
+            'bank_ifsc': self.bank_ifsc,
+            'opening_balance': self.opening_balance,
+            'opening_balance_type': self.opening_balance_type,
+            'credit_limit': self.credit_limit,
+            'discount': self.discount,
+            'notes': self.notes,
+            'tags': self.tags,
+            'cc_emails': self.cc_emails,
+            'created_at': self.created_at,
+            'is_active': self.is_active
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'user_id' in data and isinstance(data['user_id'], ObjectId):
+            data['user_id'] = str(data['user_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save customer to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, customer_id):
+        """Find customer by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(customer_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
+    
+    @classmethod
+    def find_by_email(cls, email):
+        """Find customer by email"""
+        doc = db[cls.collection_name].find_one({'email': email})
+        if doc:
+            return cls.from_dict(doc)
+        return None
+    
     def __repr__(self):
         return f'<Customer {self.name}>'
 
-class Product(db.Model):
+class Product:
     """Product model"""
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    name = db.Column(db.String(200), nullable=False)
-    sku = db.Column(db.String(50), nullable=False)
-    hsn_code = db.Column(db.String(10), nullable=True)
-    description = db.Column(db.Text, nullable=True)
-    category = db.Column(db.String(100), nullable=True)
-    brand = db.Column(db.String(100), nullable=True)
-    price = db.Column(db.Float, nullable=False)
-    purchase_price = db.Column(db.Float, nullable=True, default=0.0)
-    gst_rate = db.Column(db.Float, nullable=False, default=18.0)
-    stock_quantity = db.Column(db.Integer, nullable=False, default=0)
-    min_stock_level = db.Column(db.Integer, nullable=False, default=10)
-    unit = db.Column(db.String(20), nullable=False, default='PCS')
-    image_url = db.Column(db.String(500), nullable=True)
-    weight = db.Column(db.Float, nullable=True)
-    dimensions = db.Column(db.String(100), nullable=True)
-    vegetable_name = db.Column(db.String(200), nullable=True)
-    vegetable_name_hindi = db.Column(db.String(200), nullable=True)
-    quantity_gm = db.Column(db.Float, nullable=True)
-    quantity_kg = db.Column(db.Float, nullable=True)
-    rate_per_gm = db.Column(db.Float, nullable=True)
-    rate_per_kg = db.Column(db.Float, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    is_active = db.Column(db.Boolean, default=True)
     
-    # Relationships
-    invoice_items = db.relationship('InvoiceItem', backref='product', lazy=True)
-    stock_movements = db.relationship('StockMovement', backref='product', lazy=True)
-    admin = db.relationship('User', foreign_keys=[admin_id], backref='admin_products', lazy=True)
+    collection_name = 'products'
     
-    def __repr__(self):
-        return f'<Product {self.name}>'
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.user_id = kwargs.get('user_id')
+        self.admin_id = kwargs.get('admin_id')
+        self.name = kwargs.get('name')
+        self.sku = kwargs.get('sku')
+        self.hsn_code = kwargs.get('hsn_code')
+        self.description = kwargs.get('description')
+        self.category = kwargs.get('category')
+        self.brand = kwargs.get('brand')
+        self.price = kwargs.get('price')
+        self.purchase_price = kwargs.get('purchase_price', 0.0)
+        self.gst_rate = kwargs.get('gst_rate', 18.0)
+        self.stock_quantity = kwargs.get('stock_quantity', 0)
+        self.min_stock_level = kwargs.get('min_stock_level', 10)
+        self.unit = kwargs.get('unit', 'PCS')
+        self.image_url = kwargs.get('image_url')
+        self.weight = kwargs.get('weight')
+        self.dimensions = kwargs.get('dimensions')
+        self.vegetable_name = kwargs.get('vegetable_name')
+        self.vegetable_name_hindi = kwargs.get('vegetable_name_hindi')
+        self.quantity_gm = kwargs.get('quantity_gm')
+        self.quantity_kg = kwargs.get('quantity_kg')
+        self.rate_per_gm = kwargs.get('rate_per_gm')
+        self.rate_per_kg = kwargs.get('rate_per_kg')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+        self.is_active = kwargs.get('is_active', True)
     
     @property
     def is_low_stock(self):
         return self.stock_quantity <= self.min_stock_level
-
-class Invoice(db.Model):
-    """Invoice model"""
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
-    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=True)  # Link to order if generated from order
-    invoice_number = db.Column(db.String(20), unique=True, nullable=False)
-    invoice_date = db.Column(db.Date, nullable=False, default=datetime.utcnow().date)
-    due_date = db.Column(db.Date, nullable=True)
-    subtotal = db.Column(db.Float, nullable=False, default=0.0)
-    cgst_amount = db.Column(db.Float, nullable=False, default=0.0)
-    sgst_amount = db.Column(db.Float, nullable=False, default=0.0)
-    igst_amount = db.Column(db.Float, nullable=False, default=0.0)
-    total_amount = db.Column(db.Float, nullable=False, default=0.0)
-    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, paid, cancelled
-    payment_terms = db.Column(db.String(100), nullable=True)
-    notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
-    items = db.relationship('InvoiceItem', backref='invoice', lazy=True, cascade='all, delete-orphan')
-    order = db.relationship('Order', backref='invoices', lazy=True)
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'user_id': ObjectId(self.user_id) if self.user_id and isinstance(self.user_id, str) and ObjectId.is_valid(self.user_id) else self.user_id,
+            'admin_id': ObjectId(self.admin_id) if self.admin_id and isinstance(self.admin_id, str) and ObjectId.is_valid(self.admin_id) else self.admin_id,
+            'name': self.name,
+            'sku': self.sku,
+            'hsn_code': self.hsn_code,
+            'description': self.description,
+            'category': self.category,
+            'brand': self.brand,
+            'price': self.price,
+            'purchase_price': self.purchase_price,
+            'gst_rate': self.gst_rate,
+            'stock_quantity': self.stock_quantity,
+            'min_stock_level': self.min_stock_level,
+            'unit': self.unit,
+            'image_url': self.image_url,
+            'weight': self.weight,
+            'dimensions': self.dimensions,
+            'vegetable_name': self.vegetable_name,
+            'vegetable_name_hindi': self.vegetable_name_hindi,
+            'quantity_gm': self.quantity_gm,
+            'quantity_kg': self.quantity_kg,
+            'rate_per_gm': self.rate_per_gm,
+            'rate_per_kg': self.rate_per_kg,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'is_active': self.is_active
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'user_id' in data and isinstance(data['user_id'], ObjectId):
+            data['user_id'] = str(data['user_id'])
+        if 'admin_id' in data and isinstance(data['admin_id'], ObjectId):
+            data['admin_id'] = str(data['admin_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save product to MongoDB"""
+        data = self.to_dict()
+        data['updated_at'] = datetime.utcnow()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, product_id):
+        """Find product by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(product_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
     
     def __repr__(self):
-        return f'<Invoice {self.invoice_number}>'
+        return f'<Product {self.name}>'
+
+class Invoice:
+    """Invoice model"""
+    
+    collection_name = 'invoices'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.user_id = kwargs.get('user_id')
+        self.customer_id = kwargs.get('customer_id')
+        self.order_id = kwargs.get('order_id')
+        self.invoice_number = kwargs.get('invoice_number')
+        self.invoice_date = kwargs.get('invoice_date', datetime.utcnow().date())
+        self.due_date = kwargs.get('due_date')
+        self.subtotal = kwargs.get('subtotal', 0.0)
+        self.cgst_amount = kwargs.get('cgst_amount', 0.0)
+        self.sgst_amount = kwargs.get('sgst_amount', 0.0)
+        self.igst_amount = kwargs.get('igst_amount', 0.0)
+        self.total_amount = kwargs.get('total_amount', 0.0)
+        self.status = kwargs.get('status', 'pending')
+        self.payment_terms = kwargs.get('payment_terms')
+        self.notes = kwargs.get('notes')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+        self.items = kwargs.get('items', [])
     
     def calculate_totals(self):
         """Calculate invoice totals"""
-        self.subtotal = sum(item.total for item in self.items)
+        self.subtotal = sum(item.get('total', 0) for item in self.items)
         
-        # Calculate GST based on customer state vs business state
-        customer_state = self.customer.state
-        business_state = self.user.business_state
+        # Get customer and user for state comparison
+        customer = Customer.find_by_id(self.customer_id)
+        user = User.find_by_id(self.user_id)
         
-        if customer_state == business_state:
-            # Same state - CGST + SGST
-            total_gst = sum(item.gst_amount for item in self.items)
-            self.cgst_amount = total_gst / 2
-            self.sgst_amount = total_gst / 2
-            self.igst_amount = 0.0
-        else:
-            # Different state - IGST
-            self.igst_amount = sum(item.gst_amount for item in self.items)
-            self.cgst_amount = 0.0
-            self.sgst_amount = 0.0
+        if customer and user:
+            customer_state = customer.state
+            business_state = user.business_state
+            
+            if customer_state == business_state:
+                # Same state - CGST + SGST
+                total_gst = sum(item.get('gst_amount', 0) for item in self.items)
+                self.cgst_amount = total_gst / 2
+                self.sgst_amount = total_gst / 2
+                self.igst_amount = 0.0
+            else:
+                # Different state - IGST
+                self.igst_amount = sum(item.get('gst_amount', 0) for item in self.items)
+                self.cgst_amount = 0.0
+                self.sgst_amount = 0.0
         
         self.total_amount = self.subtotal + self.cgst_amount + self.sgst_amount + self.igst_amount
-
-class InvoiceItem(db.Model):
-    """Invoice item model"""
-    id = db.Column(db.Integer, primary_key=True)
-    invoice_id = db.Column(db.Integer, db.ForeignKey('invoice.id'), nullable=False)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    unit_price = db.Column(db.Float, nullable=False)
-    gst_rate = db.Column(db.Float, nullable=False)
-    gst_amount = db.Column(db.Float, nullable=False)
-    total = db.Column(db.Float, nullable=False)
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'user_id': ObjectId(self.user_id) if self.user_id and isinstance(self.user_id, str) and ObjectId.is_valid(self.user_id) else self.user_id,
+            'customer_id': ObjectId(self.customer_id) if self.customer_id and isinstance(self.customer_id, str) and ObjectId.is_valid(self.customer_id) else self.customer_id,
+            'order_id': ObjectId(self.order_id) if self.order_id and isinstance(self.order_id, str) and ObjectId.is_valid(self.order_id) else self.order_id,
+            'invoice_number': self.invoice_number,
+            'invoice_date': self.invoice_date,
+            'due_date': self.due_date,
+            'subtotal': self.subtotal,
+            'cgst_amount': self.cgst_amount,
+            'sgst_amount': self.sgst_amount,
+            'igst_amount': self.igst_amount,
+            'total_amount': self.total_amount,
+            'status': self.status,
+            'payment_terms': self.payment_terms,
+            'notes': self.notes,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'items': self.items
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'user_id' in data and isinstance(data['user_id'], ObjectId):
+            data['user_id'] = str(data['user_id'])
+        if 'customer_id' in data and isinstance(data['customer_id'], ObjectId):
+            data['customer_id'] = str(data['customer_id'])
+        if 'order_id' in data and isinstance(data['order_id'], ObjectId):
+            data['order_id'] = str(data['order_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save invoice to MongoDB"""
+        data = self.to_dict()
+        data['updated_at'] = datetime.utcnow()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, invoice_id):
+        """Find invoice by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(invoice_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
     
     def __repr__(self):
-        return f'<InvoiceItem {self.product.name if self.product else "Unknown"}>'
+        return f'<Invoice {self.invoice_number}>'
+
+class InvoiceItem:
+    """Invoice item model"""
+    
+    collection_name = 'invoice_items'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.invoice_id = kwargs.get('invoice_id')
+        self.product_id = kwargs.get('product_id')
+        self.quantity = kwargs.get('quantity')
+        self.unit_price = kwargs.get('unit_price')
+        self.gst_rate = kwargs.get('gst_rate')
+        self.gst_amount = kwargs.get('gst_amount')
+        self.total = kwargs.get('total')
     
     def calculate_totals(self):
         """Calculate item totals"""
         self.total = self.quantity * self.unit_price
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'invoice_id': ObjectId(self.invoice_id) if self.invoice_id and isinstance(self.invoice_id, str) and ObjectId.is_valid(self.invoice_id) else self.invoice_id,
+            'product_id': ObjectId(self.product_id) if self.product_id and isinstance(self.product_id, str) and ObjectId.is_valid(self.product_id) else self.product_id,
+            'quantity': self.quantity,
+            'unit_price': self.unit_price,
+            'gst_rate': self.gst_rate,
+            'gst_amount': self.gst_amount,
+            'total': self.total
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'invoice_id' in data and isinstance(data['invoice_id'], ObjectId):
+            data['invoice_id'] = str(data['invoice_id'])
+        if 'product_id' in data and isinstance(data['product_id'], ObjectId):
+            data['product_id'] = str(data['product_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save invoice item to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    def __repr__(self):
+        return f'<InvoiceItem Product:{self.product_id}>'
 
-class StockMovement(db.Model):
+class StockMovement:
     """Stock movement model for tracking inventory changes"""
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
-    movement_type = db.Column(db.String(20), nullable=False)  # in, out, adjustment
-    quantity = db.Column(db.Integer, nullable=False)
-    reference = db.Column(db.String(100), nullable=True)  # invoice number, purchase order, etc.
-    notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    collection_name = 'stock_movements'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.product_id = kwargs.get('product_id')
+        self.movement_type = kwargs.get('movement_type')
+        self.quantity = kwargs.get('quantity')
+        self.reference = kwargs.get('reference')
+        self.notes = kwargs.get('notes')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'product_id': ObjectId(self.product_id) if self.product_id and isinstance(self.product_id, str) and ObjectId.is_valid(self.product_id) else self.product_id,
+            'movement_type': self.movement_type,
+            'quantity': self.quantity,
+            'reference': self.reference,
+            'notes': self.notes,
+            'created_at': self.created_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'product_id' in data and isinstance(data['product_id'], ObjectId):
+            data['product_id'] = str(data['product_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save stock movement to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
     
     def __repr__(self):
         return f'<StockMovement {self.movement_type} {self.quantity}>'
 
-class GSTReport(db.Model):
+class GSTReport:
     """GST report model for storing periodic reports"""
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    report_type = db.Column(db.String(20), nullable=False)  # GSTR1, GSTR3B, etc.
-    period_month = db.Column(db.Integer, nullable=False)
-    period_year = db.Column(db.Integer, nullable=False)
-    total_taxable_value = db.Column(db.Float, nullable=False, default=0.0)
-    total_cgst = db.Column(db.Float, nullable=False, default=0.0)
-    total_sgst = db.Column(db.Float, nullable=False, default=0.0)
-    total_igst = db.Column(db.Float, nullable=False, default=0.0)
-    report_data = db.Column(db.JSON, nullable=True)  # Store detailed report data
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    collection_name = 'gst_reports'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.user_id = kwargs.get('user_id')
+        self.report_type = kwargs.get('report_type')
+        self.period_month = kwargs.get('period_month')
+        self.period_year = kwargs.get('period_year')
+        self.total_taxable_value = kwargs.get('total_taxable_value', 0.0)
+        self.total_cgst = kwargs.get('total_cgst', 0.0)
+        self.total_sgst = kwargs.get('total_sgst', 0.0)
+        self.total_igst = kwargs.get('total_igst', 0.0)
+        self.report_data = kwargs.get('report_data')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'user_id': ObjectId(self.user_id) if self.user_id and isinstance(self.user_id, str) and ObjectId.is_valid(self.user_id) else self.user_id,
+            'report_type': self.report_type,
+            'period_month': self.period_month,
+            'period_year': self.period_year,
+            'total_taxable_value': self.total_taxable_value,
+            'total_cgst': self.total_cgst,
+            'total_sgst': self.total_sgst,
+            'total_igst': self.total_igst,
+            'report_data': self.report_data,
+            'created_at': self.created_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'user_id' in data and isinstance(data['user_id'], ObjectId):
+            data['user_id'] = str(data['user_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save GST report to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
     
     def __repr__(self):
         return f'<GSTReport {self.report_type} {self.period_month}/{self.period_year}>'
 
-class Order(db.Model):
+class Order:
     """Order model for customer orders"""
-    id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
-    order_number = db.Column(db.String(20), unique=True, nullable=False)
-    order_date = db.Column(db.DateTime, default=datetime.utcnow)
-    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, confirmed, shipped, delivered, cancelled
-    subtotal = db.Column(db.Float, nullable=False, default=0.0)
-    total_amount = db.Column(db.Float, nullable=False, default=0.0)
-    notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
-    items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
+    collection_name = 'orders'
     
-    def __repr__(self):
-        return f'<Order {self.order_number}>'
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.customer_id = kwargs.get('customer_id')
+        self.order_number = kwargs.get('order_number')
+        self.order_date = kwargs.get('order_date', datetime.utcnow())
+        self.status = kwargs.get('status', 'pending')
+        self.subtotal = kwargs.get('subtotal', 0.0)
+        self.total_amount = kwargs.get('total_amount', 0.0)
+        self.notes = kwargs.get('notes')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+        self.items = kwargs.get('items', [])
     
     def calculate_totals(self):
         """Calculate order totals"""
-        self.subtotal = sum(item.total for item in self.items)
+        self.subtotal = sum(item.get('total', 0) for item in self.items)
         self.total_amount = self.subtotal
-
-class OrderItem(db.Model):
-    """Order item model"""
-    id = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    unit_price = db.Column(db.Float, nullable=False)
-    total = db.Column(db.Float, nullable=False)
     
-    # Relationships
-    product = db.relationship('Product', backref='order_items', lazy=True)
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'customer_id': ObjectId(self.customer_id) if self.customer_id and isinstance(self.customer_id, str) and ObjectId.is_valid(self.customer_id) else self.customer_id,
+            'order_number': self.order_number,
+            'order_date': self.order_date,
+            'status': self.status,
+            'subtotal': self.subtotal,
+            'total_amount': self.total_amount,
+            'notes': self.notes,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'items': self.items
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'customer_id' in data and isinstance(data['customer_id'], ObjectId):
+            data['customer_id'] = str(data['customer_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save order to MongoDB"""
+        data = self.to_dict()
+        data['updated_at'] = datetime.utcnow()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_id(cls, order_id):
+        """Find order by ID"""
+        try:
+            doc = db[cls.collection_name].find_one({'_id': ObjectId(order_id)})
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
     
     def __repr__(self):
-        return f'<OrderItem {self.product.name if self.product else "Unknown"}>'
+        return f'<Order {self.order_number}>'
+
+class OrderItem:
+    """Order item model"""
+    
+    collection_name = 'order_items'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.order_id = kwargs.get('order_id')
+        self.product_id = kwargs.get('product_id')
+        self.quantity = kwargs.get('quantity')
+        self.unit_price = kwargs.get('unit_price')
+        self.total = kwargs.get('total')
     
     def calculate_totals(self):
         """Calculate item totals"""
         self.total = self.quantity * self.unit_price
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'order_id': ObjectId(self.order_id) if self.order_id and isinstance(self.order_id, str) and ObjectId.is_valid(self.order_id) else self.order_id,
+            'product_id': ObjectId(self.product_id) if self.product_id and isinstance(self.product_id, str) and ObjectId.is_valid(self.product_id) else self.product_id,
+            'quantity': self.quantity,
+            'unit_price': self.unit_price,
+            'total': self.total
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'order_id' in data and isinstance(data['order_id'], ObjectId):
+            data['order_id'] = str(data['order_id'])
+        if 'product_id' in data and isinstance(data['product_id'], ObjectId):
+            data['product_id'] = str(data['product_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save order item to MongoDB"""
+        data = self.to_dict()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    def __repr__(self):
+        return f'<OrderItem Product:{self.product_id}>'
 
-
-class CustomerProductPrice(db.Model):
+class CustomerProductPrice:
     """Customer-specific product pricing"""
-    id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'), nullable=False)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
-    price = db.Column(db.Float, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    __table_args__ = (
-        db.UniqueConstraint('customer_id', 'product_id', name='_customer_product_price_uc'),
-    )
-
-    customer = db.relationship('Customer', backref='product_prices', lazy=True)
-    product = db.relationship('Product', backref='customer_prices', lazy=True)
-
+    
+    collection_name = 'customer_product_prices'
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('_id') or kwargs.get('id')
+        self.customer_id = kwargs.get('customer_id')
+        self.product_id = kwargs.get('product_id')
+        self.price = kwargs.get('price')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+    
+    def to_dict(self):
+        return {
+            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+            'customer_id': ObjectId(self.customer_id) if self.customer_id and isinstance(self.customer_id, str) and ObjectId.is_valid(self.customer_id) else self.customer_id,
+            'product_id': ObjectId(self.product_id) if self.product_id and isinstance(self.product_id, str) and ObjectId.is_valid(self.product_id) else self.product_id,
+            'price': self.price,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return None
+        if '_id' in data:
+            data['id'] = str(data['_id'])
+        if 'customer_id' in data and isinstance(data['customer_id'], ObjectId):
+            data['customer_id'] = str(data['customer_id'])
+        if 'product_id' in data and isinstance(data['product_id'], ObjectId):
+            data['product_id'] = str(data['product_id'])
+        return cls(**data)
+    
+    def save(self):
+        """Save customer product price to MongoDB"""
+        data = self.to_dict()
+        data['updated_at'] = datetime.utcnow()
+        if '_id' in data and data['_id']:
+            db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+        else:
+            result = db[self.collection_name].insert_one(data)
+            self.id = str(result.inserted_id)
+        return self
+    
+    @classmethod
+    def find_by_customer_and_product(cls, customer_id, product_id):
+        """Find price by customer and product"""
+        try:
+            doc = db[cls.collection_name].find_one({
+                'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id,
+                'product_id': ObjectId(product_id) if isinstance(product_id, str) else product_id
+            })
+            if doc:
+                return cls.from_dict(doc)
+        except:
+            pass
+        return None
+    
     def __repr__(self):
         return f'<CustomerProductPrice Customer:{self.customer_id} Product:{self.product_id} Price:{self.price}>'

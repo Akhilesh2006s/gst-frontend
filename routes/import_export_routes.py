@@ -16,7 +16,9 @@ except ImportError:
 
 # Try to import from models, fallback to app_working
 try:
-    from models import db, Customer, Product, Order, OrderItem, Invoice, InvoiceItem, StockMovement
+    from models import Customer, Product, Order, OrderItem, Invoice, InvoiceItem, StockMovement
+    from database import db
+    from bson import ObjectId
 except ImportError:
     # If using app_working.py, models are defined there
     pass
@@ -32,10 +34,14 @@ def export_customers():
     try:
         # Get customers (app_working.py doesn't have user_id, so get all active)
         try:
-            customers = Customer.query.filter_by(is_active=True).all()
+            customers = [Customer.from_dict(doc) for doc in db['customers'].find({'is_active': True})]
         except:
             # Fallback if user_id exists
-            customers = Customer.query.filter_by(user_id=current_user.id, is_active=True).all() if hasattr(current_user, 'id') else Customer.query.filter_by(is_active=True).all()
+            if hasattr(current_user, 'id'):
+                user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+                customers = [Customer.from_dict(doc) for doc in db['customers'].find({'user_id': user_id_obj, 'is_active': True})]
+            else:
+                customers = [Customer.from_dict(doc) for doc in db['customers'].find({'is_active': True})]
         
         # Create CSV in memory
         output = StringIO()
@@ -86,9 +92,10 @@ def export_products():
         
         # Get products
         try:
-            products = Product.query.filter_by(user_id=current_user.id).all()
+            user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+            products = [Product.from_dict(doc) for doc in db['products'].find({'user_id': user_id_obj})]
         except:
-            products = Product.query.all()
+            products = [Product.from_dict(doc) for doc in db['products'].find()]
         
         if format_type == 'excel' and OPENPYXL_AVAILABLE:
             # Export to Excel
@@ -207,9 +214,13 @@ def export_orders():
     try:
         # Get orders (app_working.py uses admin_id instead of user_id)
         try:
-            orders = Order.query.all()
+            orders = [Order.from_dict(doc) for doc in db['orders'].find()]
         except:
-            orders = Order.query.filter_by(user_id=current_user.id).all() if hasattr(current_user, 'id') else Order.query.all()
+            if hasattr(current_user, 'id'):
+                user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+                orders = [Order.from_dict(doc) for doc in db['orders'].find({'user_id': user_id_obj})]
+            else:
+                orders = [Order.from_dict(doc) for doc in db['orders'].find()]
         
         output = StringIO()
         writer = csv.writer(output)
@@ -222,10 +233,11 @@ def export_orders():
         
         # Write data
         for order in orders:
-            customer = Customer.query.get(order.customer_id)
+            customer = Customer.find_by_id(order.customer_id)
+            order_items = order.items if order.items else []
             items_str = '; '.join([
-                f"{item.product.name}:{item.quantity}:{item.price}"
-                for item in order.items
+                f"{Product.find_by_id(item.get('product_id')).name if isinstance(item, dict) and Product.find_by_id(item.get('product_id')) else 'Unknown'}:{item.get('quantity', 0) if isinstance(item, dict) else 0}:{item.get('unit_price', 0) if isinstance(item, dict) else 0}"
+                for item in order_items
             ])
             
             writer.writerow([
@@ -287,7 +299,7 @@ def import_customers():
                     continue
                 
                 # Check if customer already exists
-                existing = Customer.query.filter_by(email=email).first()
+                existing = Customer.find_by_email(email)
                 if existing:
                     errors.append(f"Row {row_num}: Customer with email {email} already exists")
                     skipped += 1
@@ -319,14 +331,12 @@ def import_customers():
                 default_password = row.get('Password', 'default123').strip() or 'default123'
                 customer.set_password(default_password)
                 
-                db.session.add(customer)
+                customer.save()
                 imported += 1
                 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
                 skipped += 1
-        
-        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -336,7 +346,6 @@ def import_customers():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @import_export_bp.route('/import/products', methods=['POST'])
@@ -438,36 +447,17 @@ def import_products():
                 if not sku:
                     sku = f"SKU-{vegetable_name[:10].upper().replace(' ', '-')}-{datetime.now().strftime('%Y%m%d%H%M%S')[-8:]}"
                 
-                # Check if product with same SKU exists (use raw SQL to avoid column issues)
+                # Check if product with same SKU exists
                 try:
-                    # Use raw SQL to check for existing SKU without loading all columns
-                    result = db.session.execute(
-                        db.text("SELECT id FROM product WHERE sku = :sku AND user_id = :user_id LIMIT 1"),
-                        {"sku": sku, "user_id": current_user.id}
-                    ).fetchone()
-                    if result:
+                    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+                    existing_doc = db['products'].find_one({'sku': sku, 'user_id': user_id_obj})
+                    if existing_doc:
                         errors.append(f"Row {row_num}: Product with SKU {sku} already exists")
                         skipped += 1
                         continue
                 except Exception as e:
-                    # Fallback to ORM query if raw SQL fails
-                    try:
-                        existing = Product.query.filter_by(sku=sku, user_id=current_user.id).first()
-                        if existing:
-                            errors.append(f"Row {row_num}: Product with SKU {sku} already exists")
-                            skipped += 1
-                            continue
-                    except:
-                        # If that also fails, try without user_id
-                        try:
-                            existing = Product.query.filter_by(sku=sku).first()
-                            if existing:
-                                errors.append(f"Row {row_num}: Product with SKU {sku} already exists")
-                                skipped += 1
-                                continue
-                        except:
-                            # If all checks fail, continue with import
-                            pass
+                    # If check fails, continue with import
+                    pass
                 
                 # Parse vegetable-specific quantity and rate fields
                 quantity_gm = None
@@ -648,14 +638,12 @@ def import_products():
                     product.dimensions = dim_val if dim_val else None
                 # user_id and admin_id are already set during Product creation above
                 
-                db.session.add(product)
+                product.save()
                 imported += 1
                 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
                 skipped += 1
-        
-        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -665,7 +653,6 @@ def import_products():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @import_export_bp.route('/import/orders', methods=['POST'])
@@ -697,9 +684,14 @@ def import_orders():
                 
                 # Find customer
                 try:
-                    customer = Customer.query.filter_by(email=customer_email).first()
+                    customer = Customer.find_by_email(customer_email)
                 except:
-                    customer = Customer.query.filter_by(email=customer_email, user_id=current_user.id).first() if hasattr(current_user, 'id') else None
+                    if hasattr(current_user, 'id'):
+                        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+                        customer_doc = db['customers'].find_one({'email': customer_email, 'user_id': user_id_obj})
+                        customer = Customer.from_dict(customer_doc) if customer_doc else None
+                    else:
+                        customer = Customer.find_by_email(customer_email)
                 if not customer:
                     errors.append(f"Row {row_num}: Customer with email {customer_email} not found")
                     skipped += 1
@@ -725,9 +717,15 @@ def import_orders():
                         
                         # Find product
                         try:
-                            product = Product.query.filter_by(name=product_name).first()
+                            product_doc = db['products'].find_one({'name': product_name})
+                            product = Product.from_dict(product_doc) if product_doc else None
                         except:
-                            product = Product.query.filter_by(name=product_name, user_id=current_user.id).first() if hasattr(current_user, 'id') else None
+                            if hasattr(current_user, 'id'):
+                                user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+                                product_doc = db['products'].find_one({'name': product_name, 'user_id': user_id_obj})
+                                product = Product.from_dict(product_doc) if product_doc else None
+                            else:
+                                product = None
                         if product:
                             items_list.append({
                                 'product': product,
@@ -753,26 +751,30 @@ def import_orders():
                     order.admin_id = current_user.id if hasattr(current_user, 'id') else None
                 if hasattr(order, 'user_id'):
                     order.user_id = current_user.id if hasattr(current_user, 'id') else None
-                db.session.add(order)
-                db.session.flush()  # Get order ID
+                order.save()
                 
                 # Create order items
+                order_items_list = []
                 for item_data in items_list:
                     order_item = OrderItem(
                         order_id=order.id,
                         product_id=item_data['product'].id,
                         quantity=item_data['quantity'],
-                        price=item_data['price']
+                        unit_price=item_data['price'],
+                        total=item_data['quantity'] * item_data['price']
                     )
-                    db.session.add(order_item)
+                    order_item.save()
+                    order_items_list.append(order_item.to_dict())
+                
+                # Update order with items
+                order.items = order_items_list
+                order.save()
                 
                 imported += 1
                 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
                 skipped += 1
-        
-        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -782,7 +784,6 @@ def import_orders():
         })
         
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @import_export_bp.route('/import/stock', methods=['POST'])
@@ -877,20 +878,26 @@ def import_stock():
                     skipped += 1
                     continue
                 
+                user_id_obj = ObjectId(user_id) if isinstance(user_id, str) else user_id
+                
                 if product_id:
                     try:
-                        product = Product.query.filter_by(id=int(product_id), user_id=user_id, is_active=True).first()
+                        product_doc = db['products'].find_one({'_id': ObjectId(int(product_id)), 'user_id': user_id_obj, 'is_active': True})
+                        product = Product.from_dict(product_doc) if product_doc else None
                     except (ValueError, TypeError):
                         pass
                 
                 if not product and sku:
-                    product = Product.query.filter_by(sku=sku, user_id=user_id, is_active=True).first()
+                    product_doc = db['products'].find_one({'sku': sku, 'user_id': user_id_obj, 'is_active': True})
+                    product = Product.from_dict(product_doc) if product_doc else None
                 
                 if not product and product_name:
-                    product = Product.query.filter_by(name=product_name, user_id=user_id, is_active=True).first()
+                    product_doc = db['products'].find_one({'name': product_name, 'user_id': user_id_obj, 'is_active': True})
+                    product = Product.from_dict(product_doc) if product_doc else None
 
                 if not product and vegetable_name:
-                    product = Product.query.filter_by(name=vegetable_name, user_id=user_id, is_active=True).first()
+                    product_doc = db['products'].find_one({'name': vegetable_name, 'user_id': user_id_obj, 'is_active': True})
+                    product = Product.from_dict(product_doc) if product_doc else None
 
                 price_per_kg = parse_float(rate_per_kg_str)
                 price_per_gm = parse_float(rate_per_gm_str)
@@ -903,26 +910,24 @@ def import_stock():
                     unique_sku = f"{sku_slug}-{datetime.utcnow().strftime('%H%M%S')}"
                     counter = 1
                     gen_sku = unique_sku
-                    while Product.query.filter_by(sku=gen_sku, user_id=user_id).first():
+                    while db['products'].find_one({'sku': gen_sku, 'user_id': user_id_obj}):
                         gen_sku = f"{unique_sku}-{counter}"
                         counter += 1
-                    product_kwargs = {
-                        'user_id': user_id,
-                        'name': base_name,
-                        'sku': gen_sku,
-                        'category': 'Vegetables',
-                        'unit': 'GMS',
-                        'price': price_per_kg or 0.0,
-                        'gst_rate': 0.0,
-                        'stock_quantity': 0,
-                        'min_stock_level': 10,
-                        'is_active': True
-                    }
-                    if 'admin_id' in Product.__table__.columns:
-                        product_kwargs['admin_id'] = user_id
-                    product = Product(**product_kwargs)
-                    db.session.add(product)
-                    db.session.flush()
+                    
+                    product = Product(
+                        user_id=user_id,
+                        admin_id=user_id,  # Set admin_id to same as user_id for backward compatibility
+                        name=base_name,
+                        sku=gen_sku,
+                        category='Vegetables',
+                        unit='GMS',
+                        price=price_per_kg or 0.0,
+                        gst_rate=0.0,
+                        stock_quantity=0,
+                        min_stock_level=10,
+                        is_active=True
+                    )
+                    product.save()
                 
                 if not product:
                     errors.append(f"Row {row_num}: Product not found")
@@ -1001,15 +1006,15 @@ def import_stock():
                     product.stock_quantity -= quantity_int
                 
                 product.updated_at = datetime.utcnow()
-                db.session.add(movement)
+                product.save()
+                
+                movement.save()
                 imported += 1
                 
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
                 skipped += 1
                 continue
-        
-        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -1019,7 +1024,6 @@ def import_stock():
         })
         
     except Exception as e:
-        db.session.rollback()
         import traceback
         print(f"Error in stock import: {str(e)}")
         traceback.print_exc()

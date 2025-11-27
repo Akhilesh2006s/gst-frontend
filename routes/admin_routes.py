@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
-from models import db, Customer, Order, OrderItem, Product, Invoice, InvoiceItem
+from models import Customer, Order, OrderItem, Product, Invoice, InvoiceItem
+from database import db
+from bson import ObjectId
 from datetime import datetime, timedelta
 import uuid
 
@@ -32,19 +34,19 @@ def get_customers():
         # This includes customers created by admin and customers who registered through customer login
         # Filter by user_id if it exists, otherwise show all
         try:
-            from sqlalchemy import or_
             # Get customers that belong to this user OR have no user_id (for backward compatibility)
-            customers = Customer.query.filter(
-                or_(
-                    Customer.user_id == current_user.id,
-                    Customer.user_id.is_(None)
-                )
-            ).all()
+            query = {
+                '$or': [
+                    {'user_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id},
+                    {'user_id': None}
+                ]
+            }
+            customers = [Customer.from_dict(doc) for doc in db['customers'].find(query)]
         except Exception as query_error:
             print(f"Query error: {str(query_error)}")
             # Fallback: try to get all customers
             try:
-                customers = Customer.query.all()
+                customers = [Customer.from_dict(doc) for doc in db['customers'].find()]
             except Exception as fallback_error:
                 print(f"Fallback query error: {str(fallback_error)}")
                 customers = []
@@ -106,7 +108,7 @@ def create_customer():
             return jsonify({'success': False, 'error': 'Email is required'}), 400
         
         # Check if customer with same email already exists
-        existing_customer = Customer.query.filter_by(email=data['email']).first()
+        existing_customer = Customer.find_by_email(data['email'])
         if existing_customer:
             return jsonify({'success': False, 'error': 'Customer with this email already exists'}), 400
         
@@ -150,16 +152,12 @@ def create_customer():
             password = data.get('password', 'default123')
             customer.set_password(password)
             
-            print(f"[CREATE CUSTOMER] Customer object created, adding to session...")
-            db.session.add(customer)
-            db.session.flush()  # Get the ID without committing
+            print(f"[CREATE CUSTOMER] Customer object created, saving...")
+            customer.save()
             print(f"[CREATE CUSTOMER] Customer ID: {customer.id}")
-            
-            db.session.commit()
-            print(f"[CREATE CUSTOMER] Customer committed successfully")
+            print(f"[CREATE CUSTOMER] Customer saved successfully")
             
         except Exception as create_error:
-            db.session.rollback()
             import traceback
             error_trace = traceback.format_exc()
             print(f"[CREATE CUSTOMER] Error creating customer object: {str(create_error)}")
@@ -178,7 +176,6 @@ def create_customer():
         })
     
     except Exception as e:
-        db.session.rollback()
         import traceback
         error_trace = traceback.format_exc()
         print(f"[CREATE CUSTOMER] Error creating customer: {str(e)}")
@@ -191,7 +188,7 @@ def get_customer(customer_id):
     """Get specific customer details - admins can view all customers"""
     try:
         # Allow admins to view all customers, not just their own
-        customer = Customer.query.filter_by(id=customer_id).first()
+        customer = Customer.find_by_id(customer_id)
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
@@ -222,7 +219,7 @@ def update_customer(customer_id):
     """Update customer details - admins can edit any customer"""
     try:
         # Allow admins to edit any customer, not just their own
-        customer = Customer.query.filter_by(id=customer_id).first()
+        customer = Customer.find_by_id(customer_id)
         
         if not customer:
             return jsonify({'success': False, 'error': 'Customer not found'}), 404
@@ -231,7 +228,7 @@ def update_customer(customer_id):
         
         # Check if email is changed and already exists
         if data.get('email') and data['email'] != customer.email:
-            existing_customer = Customer.query.filter_by(email=data['email']).first()
+            existing_customer = Customer.find_by_email(data['email'])
             if existing_customer:
                 return jsonify({'success': False, 'error': 'Email already registered'}), 400
         
@@ -259,7 +256,7 @@ def update_customer(customer_id):
         if data.get('password') and data['password'].strip():
             customer.set_password(data['password'])
         
-        db.session.commit()
+        customer.save()
         
         return jsonify({
             'success': True,
@@ -279,7 +276,6 @@ def update_customer(customer_id):
         })
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error updating customer: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -289,39 +285,36 @@ def delete_customer(customer_id):
     """Delete a customer (hard delete)"""
     try:
         # Allow admins to delete any customer
-        customer = Customer.query.filter_by(id=customer_id).first()
+        customer = Customer.find_by_id(customer_id)
         
         if not customer:
             return jsonify({'success': False, 'error': 'Customer not found'}), 404
         
         # Check if customer has invoices
-        if customer.invoices:
+        invoice_count = db['invoices'].count_documents({'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id})
+        if invoice_count > 0:
             return jsonify({
                 'success': False, 
                 'message': 'Cannot delete customer with existing invoices. Please delete related invoices first.'
             }), 400
         
         # Check if customer has orders
-        if customer.orders:
+        order_count = db['orders'].count_documents({'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id})
+        if order_count > 0:
             return jsonify({
                 'success': False, 
                 'message': 'Cannot delete customer with existing orders. Please delete related orders first.'
             }), 400
         
-        # Check if customer has product prices
-        if customer.product_prices:
-            # Delete customer product prices first
-            for price in customer.product_prices:
-                db.session.delete(price)
+        # Delete customer product prices first
+        db['customer_product_prices'].delete_many({'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id})
         
         # Hard delete the customer
-        db.session.delete(customer)
-        db.session.commit()
+        db['customers'].delete_one({'_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id})
         
         return jsonify({'success': True, 'message': 'Customer deleted successfully'})
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error deleting customer: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -331,15 +324,14 @@ def toggle_customer_status(customer_id):
     """Toggle customer active/inactive status"""
     try:
         # Allow admins to toggle status of any customer
-        customer = Customer.query.filter_by(id=customer_id).first()
+        customer = Customer.find_by_id(customer_id)
         
         if not customer:
             return jsonify({'success': False, 'error': 'Customer not found'}), 404
         
         # Toggle is_active
         customer.is_active = not customer.is_active
-        
-        db.session.commit()
+        customer.save()
         
         return jsonify({
             'success': True,
@@ -348,7 +340,6 @@ def toggle_customer_status(customer_id):
         })
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error toggling customer status: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -361,28 +352,32 @@ def get_orders():
         customer_id = request.args.get('customer_id', type=int)
         
         # Get ALL orders - no filtering by admin assignment
-        query = Order.query
+        query = {}
         
         # Filter by customer if customer_id is provided
         if customer_id:
-            query = query.filter(Order.customer_id == customer_id)
+            query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
         
-        orders = query.order_by(Order.created_at.desc()).all()
+        orders = [Order.from_dict(doc) for doc in db['orders'].find(query).sort('created_at', -1)]
         print(f"[ADMIN ORDERS] Admin {current_user.id} requesting orders. Found {len(orders)} total orders in database")
         orders_data = []
         
         for order in orders:
             print(f"[ADMIN ORDERS] Processing order {order.id}: customer_id={order.customer_id}, order_number={order.order_number}")
             # Get customer details
-            customer = Customer.query.get(order.customer_id)
+            customer = Customer.find_by_id(order.customer_id)
             
             # Get order items
             items_data = []
-            for item in order.items:
+            order_items = [OrderItem.from_dict(doc) for doc in db['order_items'].find(
+                {'order_id': ObjectId(order.id) if isinstance(order.id, str) else order.id}
+            )]
+            for item in order_items:
+                product = Product.find_by_id(item.product_id)
                 items_data.append({
                     'id': item.id,
                     'product_id': item.product_id,
-                    'product_name': item.product.name if item.product else 'Unknown Product',
+                    'product_name': product.name if product else 'Unknown Product',
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
                     'total': float(item.total)
@@ -421,18 +416,17 @@ def update_order_status(order_id):
             return jsonify({'success': False, 'error': 'Status is required'}), 400
         
         # Get order - admins can update any order
-        order = Order.query.filter_by(id=order_id).first()
+        order = Order.find_by_id(order_id)
         
         if not order:
             return jsonify({'success': False, 'error': 'Order not found'}), 404
         
         order.status = new_status
-        db.session.commit()
+        order.save()
         
         return jsonify({'success': True, 'message': 'Order status updated successfully'})
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error updating order status: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -442,14 +436,14 @@ def generate_invoice_from_order(order_id):
     """Generate an invoice from an order"""
     try:
         # Get order - admins can generate invoices for any order
-        order = Order.query.filter_by(id=order_id).first()
+        order = Order.find_by_id(order_id)
         
         if not order:
             return jsonify({'success': False, 'error': 'Order not found'}), 404
         
         # Check if invoice already exists for this order
-        existing_invoice = Invoice.query.filter_by(order_id=order_id).first()
-        if existing_invoice:
+        existing_invoice_doc = db['invoices'].find_one({'order_id': ObjectId(order_id) if isinstance(order_id, str) else order_id})
+        if existing_invoice_doc:
             return jsonify({'success': False, 'error': 'Invoice already exists for this order'}), 400
         
         # Generate invoice number
@@ -468,12 +462,14 @@ def generate_invoice_from_order(order_id):
             notes=f"Invoice generated from order {order.order_number}",
             order_id=order_id  # Link to the original order
         )
-        
-        db.session.add(invoice)
-        db.session.flush()  # Get invoice ID
+        invoice.save()
         
         # Add invoice items from order items
-        for order_item in order.items:
+        order_items = [OrderItem.from_dict(doc) for doc in db['order_items'].find(
+            {'order_id': ObjectId(order_id) if isinstance(order_id, str) else order_id}
+        )]
+        invoice_items_list = []
+        for order_item in order_items:
             # Calculate GST (assuming 18% for now)
             gst_rate = 18.0
             item_total = order_item.quantity * order_item.unit_price
@@ -488,12 +484,13 @@ def generate_invoice_from_order(order_id):
                 gst_amount=gst_amount,
                 total=item_total
             )
-            db.session.add(invoice_item)
+            invoice_item.save()
+            invoice_items_list.append(invoice_item.to_dict())
         
-        # Calculate invoice totals
+        # Update invoice with items and calculate totals
+        invoice.items = invoice_items_list
         invoice.calculate_totals()
-        
-        db.session.commit()
+        invoice.save()
         
         return jsonify({
             'success': True,
@@ -506,6 +503,5 @@ def generate_invoice_from_order(order_id):
         })
     
     except Exception as e:
-        db.session.rollback()
         print(f"Error generating invoice: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500

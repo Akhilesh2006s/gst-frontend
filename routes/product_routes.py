@@ -1,8 +1,9 @@
 from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify, current_app
 from flask_login import login_required, current_user
-from models import db, Product, StockMovement, CustomerProductPrice, Customer
+from models import Product, StockMovement, CustomerProductPrice, Customer
+from database import db
+from bson import ObjectId
 from forms import ProductForm, StockMovementForm
-from sqlalchemy import or_, desc
 from datetime import datetime
 import os
 import uuid
@@ -36,12 +37,14 @@ def api_add_to_inventory():
             # Ensure SKU is unique
             counter = 1
             original_sku = sku
-            while Product.query.filter_by(sku=sku, user_id=current_user.id).first():
+            user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+            while db['products'].find_one({'sku': sku, 'user_id': user_id_obj}):
                 sku = f"{original_sku}-{counter}"
                 counter += 1
         
         # Check if SKU already exists (if provided)
-        if data.get('sku') and Product.query.filter_by(sku=sku, user_id=current_user.id).first():
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        if data.get('sku') and db['products'].find_one({'sku': sku, 'user_id': user_id_obj}):
             return jsonify({'success': False, 'error': 'SKU already exists'}), 400
         
         product = Product(
@@ -70,8 +73,7 @@ def api_add_to_inventory():
             is_active=True
         )
         
-        db.session.add(product)
-        db.session.commit()
+        product.save()
         
         # Add initial stock movement if stock quantity > 0
         if data.get('stock_quantity', 0) > 0:
@@ -83,8 +85,7 @@ def api_add_to_inventory():
                 notes='Product added to inventory',
                 created_at=datetime.utcnow()
             )
-            db.session.add(movement)
-            db.session.commit()
+            movement.save()
         
         return jsonify({
             'success': True, 
@@ -99,7 +100,6 @@ def api_add_to_inventory():
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/', methods=['GET'])
@@ -119,21 +119,19 @@ def api_get_products():
         
         # Get all products (active and inactive) so admin can manage visibility
         # Customers will only see active products via their endpoint
-        query = Product.query.filter_by(user_id=user_id)
+        query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
         
         if search:
-            query = query.filter(
-                or_(
-                    Product.name.contains(search),
-                    Product.sku.contains(search),
-                    Product.hsn_code.contains(search)
-                )
-            )
+            query['$or'] = [
+                {'name': {'$regex': search, '$options': 'i'}},
+                {'sku': {'$regex': search, '$options': 'i'}},
+                {'hsn_code': {'$regex': search, '$options': 'i'}}
+            ]
         
         if category and category != 'All':
-            query = query.filter(Product.category == category)
+            query['category'] = category
         
-        products = query.order_by(Product.name).all()
+        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
         print(f"Found {len(products)} products for user {user_id}")
         
         # Return only the fields needed for products page
@@ -143,7 +141,7 @@ def api_get_products():
                 # Get customer-specific price if customer_id is provided
                 if customer_id:
                     # Check if customer exists (can be from any admin since products are visible to all)
-                    customer = Customer.query.filter_by(id=customer_id).first()
+                    customer = Customer.find_by_id(customer_id)
                     if customer:
                         # Get customer-specific price if set for this product
                         try:
@@ -255,12 +253,14 @@ def api_create_product():
             # Ensure SKU is unique
             counter = 1
             original_sku = sku
-            while Product.query.filter_by(sku=sku, user_id=current_user.id).first():
+            user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+            while db['products'].find_one({'sku': sku, 'user_id': user_id_obj}):
                 sku = f"{original_sku}-{counter}"
                 counter += 1
         
         # Check if SKU already exists (if provided)
-        if data.get('sku') and Product.query.filter_by(sku=sku, user_id=current_user.id).first():
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        if data.get('sku') and db['products'].find_one({'sku': sku, 'user_id': user_id_obj}):
             return jsonify({'success': False, 'error': 'SKU already exists'}), 400
         
         product = Product(
@@ -290,8 +290,7 @@ def api_create_product():
             is_active=data.get('is_active', True)
         )
         
-        db.session.add(product)
-        db.session.commit()
+        product.save()
         
         # Add initial stock movement if stock quantity > 0
         if data.get('stock_quantity', 0) > 0:
@@ -302,8 +301,7 @@ def api_create_product():
                 reference='Initial stock',
                 notes='Initial stock entry'
             )
-            db.session.add(movement)
-            db.session.commit()
+            movement.save()
         
         return jsonify({
             'success': True, 
@@ -316,7 +314,6 @@ def api_create_product():
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Customer Product Pricing Routes - Must be defined before /<int:id> routes
@@ -328,16 +325,19 @@ def api_get_customer_prices():
         customer_id = request.args.get('customer_id', type=int)
         product_id = request.args.get('product_id', type=int)
         
-        query = CustomerProductPrice.query.join(Customer).filter(
-            Customer.user_id == current_user.id
-        )
+        # Get customers for this user first
+        customer_ids = [str(doc['_id']) for doc in db['customers'].find(
+            {'user_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id}
+        )]
+        
+        query = {'customer_id': {'$in': [ObjectId(cid) if isinstance(cid, str) else cid for cid in customer_ids]}}
         
         if customer_id:
-            query = query.filter(CustomerProductPrice.customer_id == customer_id)
+            query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
         if product_id:
-            query = query.filter(CustomerProductPrice.product_id == product_id)
+            query['product_id'] = ObjectId(product_id) if isinstance(product_id, str) else product_id
         
-        prices = query.all()
+        prices = [CustomerProductPrice.from_dict(doc) for doc in db['customer_product_prices'].find(query)]
         
         prices_data = []
         for price in prices:
@@ -386,10 +386,10 @@ def api_set_customer_price():
             return jsonify({'success': False, 'error': 'customer_id, product_id, and price are required'}), 400
         
         # First, verify customer exists (check if it belongs to this admin or any admin)
-        customer = Customer.query.filter_by(id=customer_id).first()
+        customer = Customer.find_by_id(customer_id)
         if not customer:
             # Get all customers for debugging
-            all_customers = Customer.query.all()
+            all_customers = [Customer.from_dict(doc) for doc in db['customers'].find()]
             customer_ids = [c.id for c in all_customers]
             return jsonify({
                 'success': False, 
@@ -397,10 +397,11 @@ def api_set_customer_price():
             }), 404
         
         # Verify product belongs to this admin
-        product = Product.query.filter_by(id=product_id, user_id=current_user.id).first()
-        if not product:
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        product = Product.find_by_id(product_id)
+        if not product or str(product.user_id) != str(current_user.id):
             # Get all products for debugging
-            all_products = Product.query.filter_by(user_id=current_user.id).all()
+            all_products = [Product.from_dict(doc) for doc in db['products'].find({'user_id': user_id_obj})]
             product_ids = [p.id for p in all_products]
             return jsonify({
                 'success': False, 
@@ -411,15 +412,13 @@ def api_set_customer_price():
         # The important thing is that the product belongs to the current admin
         
         # Check if price already exists
-        customer_price = CustomerProductPrice.query.filter_by(
-            customer_id=customer_id,
-            product_id=product_id
-        ).first()
+        customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id, product_id)
         
         if customer_price:
             # Update existing price
             customer_price.price = float(price)
             customer_price.updated_at = datetime.utcnow()
+            customer_price.save()
         else:
             # Create new price
             customer_price = CustomerProductPrice(
@@ -427,9 +426,7 @@ def api_set_customer_price():
                 product_id=product_id,
                 price=float(price)
             )
-            db.session.add(customer_price)
-        
-        db.session.commit()
+            customer_price.save()
         
         return jsonify({
             'success': True,
@@ -443,7 +440,6 @@ def api_set_customer_price():
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/<int:id>', methods=['GET'])
@@ -451,9 +447,9 @@ def api_set_customer_price():
 def api_get_product(id):
     """Get single product"""
     try:
-        product = Product.query.filter_by(
-            id=id, user_id=current_user.id, is_active=True
-        ).first()
+        product = Product.find_by_id(id)
+        if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+            product = None
         
         if not product:
             return jsonify({'success': False, 'error': 'Product not found'}), 404
@@ -495,18 +491,16 @@ def api_update_product(id):
     """Update product"""
     try:
         # Don't filter by is_active so we can update inactive products too
-        product = Product.query.filter_by(
-            id=id, user_id=current_user.id
-        ).first()
-        
-        if not product:
+        product = Product.find_by_id(id)
+        if not product or str(product.user_id) != str(current_user.id):
             return jsonify({'success': False, 'error': 'Product not found'}), 404
         
         data = request.get_json()
         
         # Check if SKU is changed and already exists
         if data.get('sku') != product.sku:
-            if Product.query.filter_by(sku=data['sku'], user_id=current_user.id).first():
+            user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+            if db['products'].find_one({'sku': data['sku'], 'user_id': user_id_obj}):
                 return jsonify({'success': False, 'error': 'SKU already exists'}), 400
         
         # Update product fields
@@ -533,8 +527,7 @@ def api_update_product(id):
         product.rate_per_kg = float(data.get('rate_per_kg')) if data.get('rate_per_kg') is not None else product.rate_per_kg
         product.is_active = data.get('is_active', product.is_active)
         product.updated_at = datetime.utcnow()
-        
-        db.session.commit()
+        product.save()
         
         return jsonify({
             'success': True, 
@@ -542,7 +535,6 @@ def api_update_product(id):
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/<int:id>/toggle-visibility', methods=['POST'])
@@ -550,18 +542,14 @@ def api_update_product(id):
 def api_toggle_product_visibility(id):
     """Toggle product visibility (is_active)"""
     try:
-        product = Product.query.filter_by(
-            id=id, user_id=current_user.id
-        ).first()
-        
-        if not product:
+        product = Product.find_by_id(id)
+        if not product or str(product.user_id) != str(current_user.id):
             return jsonify({'success': False, 'error': 'Product not found'}), 404
         
         # Toggle is_active
         product.is_active = not product.is_active
         product.updated_at = datetime.utcnow()
-        
-        db.session.commit()
+        product.save()
         
         return jsonify({
             'success': True,
@@ -570,7 +558,6 @@ def api_toggle_product_visibility(id):
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/<int:id>', methods=['DELETE'])
@@ -578,35 +565,28 @@ def api_toggle_product_visibility(id):
 def api_delete_product(id):
     """Delete product (hard delete)"""
     try:
-        product = Product.query.filter_by(
-            id=id, user_id=current_user.id
-        ).first()
-        
-        if not product:
+        product = Product.find_by_id(id)
+        if not product or str(product.user_id) != str(current_user.id):
             return jsonify({'success': False, 'error': 'Product not found'}), 404
         
+        product_id_obj = ObjectId(id) if isinstance(id, str) else id
+        
         # Check if product has invoice items
-        if product.invoice_items:
+        invoice_item_count = db['invoice_items'].count_documents({'product_id': product_id_obj})
+        if invoice_item_count > 0:
             return jsonify({
                 'success': False, 
                 'error': 'Cannot delete product with existing invoice items. Please delete related invoices first.'
             }), 400
         
-        # Check if product has stock movements
-        if product.stock_movements:
             # Delete stock movements first
-            for movement in product.stock_movements:
-                db.session.delete(movement)
+        db['stock_movements'].delete_many({'product_id': product_id_obj})
         
-        # Check if product has customer prices
-        if product.customer_prices:
             # Delete customer prices first
-            for price in product.customer_prices:
-                db.session.delete(price)
+        db['customer_product_prices'].delete_many({'product_id': product_id_obj})
         
         # Hard delete the product
-        db.session.delete(product)
-        db.session.commit()
+        db['products'].delete_one({'_id': product_id_obj})
         
         return jsonify({
             'success': True, 
@@ -614,7 +594,6 @@ def api_delete_product(id):
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/<int:id>/stock', methods=['POST'])
@@ -622,11 +601,8 @@ def api_delete_product(id):
 def api_stock_movement(id):
     """Add stock movement"""
     try:
-        product = Product.query.filter_by(
-            id=id, user_id=current_user.id, is_active=True
-        ).first()
-        
-        if not product:
+        product = Product.find_by_id(id)
+        if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
             return jsonify({'success': False, 'error': 'Product not found'}), 404
         
         data = request.get_json()
@@ -651,8 +627,7 @@ def api_stock_movement(id):
         
         product.updated_at = datetime.utcnow()
         
-        db.session.add(movement)
-        db.session.commit()
+        movement.save()
         
         return jsonify({
             'success': True, 
@@ -661,7 +636,6 @@ def api_stock_movement(id):
         })
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/bulk-stock', methods=['POST'])
@@ -694,9 +668,9 @@ def api_bulk_stock_movement():
                 continue
             
             try:
-                product = Product.query.filter_by(
-                    id=product_id, user_id=current_user.id, is_active=True
-                ).first()
+                product = Product.find_by_id(product_id)
+                if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+                    product = None
                 
                 if not product:
                     errors.append(f"Product {product_id} not found")
@@ -723,8 +697,9 @@ def api_bulk_stock_movement():
                     product.stock_quantity -= quantity
                 
                 product.updated_at = datetime.utcnow()
+                product.save()
+                movement.save()
                 
-                db.session.add(movement)
                 results.append({
                     'product_id': product_id,
                     'product_name': product.name,
@@ -735,8 +710,6 @@ def api_bulk_stock_movement():
                 errors.append(f"Error processing product {product_id}: {str(e)}")
                 continue
         
-        db.session.commit()
-        
         return jsonify({
             'success': True,
             'message': f'Bulk stock {movement_type} completed',
@@ -746,7 +719,6 @@ def api_bulk_stock_movement():
         })
     
     except Exception as e:
-        db.session.rollback()
         import traceback
         error_trace = traceback.format_exc()
         print(f"Error in bulk stock API: {str(e)}")
@@ -802,19 +774,20 @@ def api_get_stock_movements():
         movement_type = request.args.get('movement_type', '')  # 'in' or 'out' or empty for all
         
         # Get all products for this user
-        products = Product.query.filter_by(user_id=user_id, is_active=True).all()
-        product_ids = [p.id for p in products]
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) else user_id
+        products = [Product.from_dict(doc) for doc in db['products'].find({'user_id': user_id_obj, 'is_active': True})]
+        product_ids = [ObjectId(p.id) if isinstance(p.id, str) else p.id for p in products]
         
         if not product_ids:
             return jsonify({'success': True, 'movements': []})
         
         # Query stock movements
-        query = StockMovement.query.filter(StockMovement.product_id.in_(product_ids))
+        query = {'product_id': {'$in': product_ids}}
         
         if movement_type:
-            query = query.filter(StockMovement.movement_type == movement_type)
+            query['movement_type'] = movement_type
         
-        movements = query.order_by(desc(StockMovement.created_at)).all()
+        movements = [StockMovement.from_dict(doc) for doc in db['stock_movements'].find(query).sort('created_at', -1)]
         
         movements_data = []
         for movement in movements:
@@ -854,22 +827,23 @@ def api_get_inventory():
         category = request.args.get('category', '')
         
         # Build optimized query - only get necessary fields
-        query = Product.query.filter_by(user_id=user_id, is_active=True)
+        query = {
+            'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
+            'is_active': True
+        }
         
         if search:
-            query = query.filter(
-                or_(
-                    Product.name.contains(search),
-                    Product.sku.contains(search),
-                    Product.hsn_code.contains(search)
-                )
-            )
+            query['$or'] = [
+                {'name': {'$regex': search, '$options': 'i'}},
+                {'sku': {'$regex': search, '$options': 'i'}},
+                {'hsn_code': {'$regex': search, '$options': 'i'}}
+            ]
         
         if category and category != 'All' and category != '':
-            query = query.filter(Product.category == category)
+            query['category'] = category
         
         # Get products with optimized query
-        products = query.order_by(Product.name).all()
+        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
         
         # Calculate summary statistics efficiently
         low_stock_items = []
@@ -882,20 +856,22 @@ def api_get_inventory():
         inventory_data = []
         
         # Get last updated dates in a single query for all products
-        product_ids = [p.id for p in products]
+        product_ids = [ObjectId(p.id) if isinstance(p.id, str) else p.id for p in products]
         last_movements = {}
         if product_ids:
-            from sqlalchemy import func
-            # Get the most recent movement for each product
-            recent_movements = db.session.query(
-                StockMovement.product_id,
-                func.max(StockMovement.created_at).label('last_updated')
-            ).filter(
-                StockMovement.product_id.in_(product_ids)
-            ).group_by(StockMovement.product_id).all()
+            # Get the most recent movement for each product using aggregation
+            pipeline = [
+                {'$match': {'product_id': {'$in': product_ids}}},
+                {'$group': {
+                    '_id': '$product_id',
+                    'last_updated': {'$max': '$created_at'}
+                }}
+            ]
+            recent_movements = db['stock_movements'].aggregate(pipeline)
             
             for movement in recent_movements:
-                last_movements[movement.product_id] = movement.last_updated
+                product_id_str = str(movement['_id'])
+                last_movements[product_id_str] = movement['last_updated']
         
         for product in products:
             stock_qty = product.stock_quantity if product.stock_quantity is not None else 0
@@ -974,23 +950,38 @@ def index():
     search = request.args.get('search', '')
     category = request.args.get('category', '')
     
-    query = Product.query.filter_by(user_id=current_user.id, is_active=True)
+    query = {
+        'user_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id,
+        'is_active': True
+    }
     
     if search:
-        query = query.filter(
-            or_(
-                Product.name.contains(search),
-                Product.sku.contains(search),
-                Product.hsn_code.contains(search)
-            )
-        )
+        query['$or'] = [
+            {'name': {'$regex': search, '$options': 'i'}},
+            {'sku': {'$regex': search, '$options': 'i'}},
+            {'hsn_code': {'$regex': search, '$options': 'i'}}
+        ]
     
     if category:
-        query = query.filter(Product.category == category)
+        query['category'] = category
     
-    products = query.order_by(Product.name).paginate(
-        page=page, per_page=20, error_out=False
-    )
+    # Manual pagination for MongoDB
+    skip = (page - 1) * 20
+    all_products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1).skip(skip).limit(20)]
+    total_count = db['products'].count_documents(query)
+    
+    # Create pagination-like object
+    class Pagination:
+        def __init__(self, items, page, per_page, total):
+            self.items = items
+            self.page = page
+            self.per_page = per_page
+            self.total = total
+            self.pages = (total + per_page - 1) // per_page
+            self.has_prev = page > 1
+            self.has_next = page < self.pages
+    
+    products = Pagination(all_products, page, 20, total_count)
     
     return render_template('products/index.html', products=products, search=search, category=category)
 
@@ -1002,7 +993,8 @@ def new():
     
     if form.validate_on_submit():
         # Check if SKU already exists
-        if Product.query.filter_by(sku=form.sku.data, user_id=current_user.id).first():
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        if db['products'].find_one({'sku': form.sku.data, 'user_id': user_id_obj}):
             flash('SKU already exists. Please choose a different SKU.', 'error')
             return render_template('products/new.html', form=form)
         
@@ -1020,8 +1012,7 @@ def new():
             unit=form.unit.data
         )
         
-        db.session.add(product)
-        db.session.commit()
+        product.save()
         
         # Add initial stock movement
         if form.stock_quantity.data > 0:
@@ -1032,8 +1023,7 @@ def new():
                 reference='Initial stock',
                 notes='Initial stock entry'
             )
-            db.session.add(movement)
-            db.session.commit()
+            movement.save()
         
         flash('Product created successfully!', 'success')
         return redirect(url_for('product.index'))
@@ -1044,14 +1034,16 @@ def new():
 @login_required
 def show(id):
     """Show product details"""
-    product = Product.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    product = Product.find_by_id(id)
+    if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+        from flask import abort
+        abort(404)
     
     # Get recent stock movements
-    movements = StockMovement.query.filter_by(
-        product_id=product.id
-    ).order_by(StockMovement.created_at.desc()).limit(10).all()
+    product_id_obj = ObjectId(product.id) if isinstance(product.id, str) else product.id
+    movements = [StockMovement.from_dict(doc) for doc in db['stock_movements'].find(
+        {'product_id': product_id_obj}
+    ).sort('created_at', -1).limit(10)]
     
     return render_template('products/show.html', product=product, movements=movements)
 
@@ -1059,16 +1051,18 @@ def show(id):
 @login_required
 def edit(id):
     """Edit product"""
-    product = Product.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    product = Product.find_by_id(id)
+    if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+        from flask import abort
+        abort(404)
     
     form = ProductForm(obj=product)
     
     if form.validate_on_submit():
         # Check if SKU is changed and already exists
         if form.sku.data != product.sku:
-            if Product.query.filter_by(sku=form.sku.data, user_id=current_user.id).first():
+            user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+            if db['products'].find_one({'sku': form.sku.data, 'user_id': user_id_obj}):
                 flash('SKU already exists. Please choose a different SKU.', 'error')
                 return render_template('products/edit.html', form=form, product=product)
         
@@ -1080,8 +1074,7 @@ def edit(id):
         product.gst_rate = form.gst_rate.data
         product.min_stock_level = form.min_stock_level.data
         product.unit = form.unit.data
-        
-        db.session.commit()
+        product.save()
         
         flash('Product updated successfully!', 'success')
         return redirect(url_for('product.show', id=product.id))
@@ -1092,30 +1085,27 @@ def edit(id):
 @login_required
 def delete(id):
     """Delete product (hard delete)"""
-    product = Product.query.filter_by(
-        id=id, user_id=current_user.id
-    ).first_or_404()
+    product = Product.find_by_id(id)
+    if not product or str(product.user_id) != str(current_user.id):
+        from flask import abort
+        abort(404)
+    
+    product_id_obj = ObjectId(id) if isinstance(id, str) else id
     
     # Check if product has invoice items
-    if product.invoice_items:
+    invoice_item_count = db['invoice_items'].count_documents({'product_id': product_id_obj})
+    if invoice_item_count > 0:
         flash('Cannot delete product with existing invoice items. Please delete invoices first.', 'error')
         return redirect(url_for('product.show', id=product.id))
     
-    # Check if product has stock movements
-    if product.stock_movements:
-        # Delete stock movements first
-        for movement in product.stock_movements:
-            db.session.delete(movement)
+    # Delete stock movements first
+    db['stock_movements'].delete_many({'product_id': product_id_obj})
     
-    # Check if product has customer prices
-    if product.customer_prices:
-        # Delete customer prices first
-        for price in product.customer_prices:
-            db.session.delete(price)
+    # Delete customer prices first
+    db['customer_product_prices'].delete_many({'product_id': product_id_obj})
     
     # Hard delete the product
-    db.session.delete(product)
-    db.session.commit()
+    db['products'].delete_one({'_id': product_id_obj})
     
     flash('Product deleted successfully!', 'success')
     return redirect(url_for('product.index'))
@@ -1124,9 +1114,10 @@ def delete(id):
 @login_required
 def stock_movement(id):
     """Add stock movement"""
-    product = Product.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    product = Product.find_by_id(id)
+    if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+        from flask import abort
+        abort(404)
     
     form = StockMovementForm()
     
@@ -1150,8 +1141,7 @@ def stock_movement(id):
         else:  # adjustment
             product.stock_quantity = form.quantity.data
         
-        db.session.add(movement)
-        db.session.commit()
+        movement.save()
         
         flash('Stock movement recorded successfully!', 'success')
         return redirect(url_for('product.show', id=product.id))
@@ -1162,9 +1152,10 @@ def stock_movement(id):
 @login_required
 def inventory():
     """Inventory overview"""
-    products = Product.query.filter_by(
-        user_id=current_user.id, is_active=True
-    ).order_by(Product.name).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    products = [Product.from_dict(doc) for doc in db['products'].find(
+        {'user_id': user_id_obj, 'is_active': True}
+    ).sort('name', 1)]
     
     # Calculate inventory summary
     total_products = len(products)
@@ -1188,15 +1179,17 @@ def search():
     if len(search_term) < 2:
         return jsonify([])
     
-    products = Product.query.filter(
-        Product.user_id == current_user.id,
-        Product.is_active == True,
-        or_(
-            Product.name.contains(search_term),
-            Product.sku.contains(search_term),
-            Product.hsn_code.contains(search_term)
-        )
-    ).limit(10).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    query = {
+        'user_id': user_id_obj,
+        'is_active': True,
+        '$or': [
+            {'name': {'$regex': search_term, '$options': 'i'}},
+            {'sku': {'$regex': search_term, '$options': 'i'}},
+            {'hsn_code': {'$regex': search_term, '$options': 'i'}}
+        ]
+    }
+    products = [Product.from_dict(doc) for doc in db['products'].find(query).limit(10)]
     
     results = []
     for product in products:
@@ -1216,9 +1209,10 @@ def search():
 @login_required
 def get_product(id):
     """API endpoint to get product details"""
-    product = Product.query.filter_by(
-        id=id, user_id=current_user.id, is_active=True
-    ).first_or_404()
+    product = Product.find_by_id(id)
+    if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
+        from flask import abort
+        abort(404)
     
     customer_id = request.args.get('customer_id', type=int)
     price = product.get_customer_price(customer_id) if customer_id else product.price
@@ -1243,19 +1237,23 @@ def get_product(id):
 def api_delete_customer_price(price_id):
     """Delete customer-specific price"""
     try:
-        customer_price = CustomerProductPrice.query.join(Customer).filter(
-            CustomerProductPrice.id == price_id,
-            Customer.user_id == current_user.id
-        ).first()
+        # Get customer IDs for this user
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        customer_ids = [str(doc['_id']) for doc in db['customers'].find({'user_id': user_id_obj})]
         
-        if not customer_price:
+        # Find price that belongs to one of these customers
+        price_id_obj = ObjectId(price_id) if isinstance(price_id, str) else price_id
+        customer_price_doc = db['customer_product_prices'].find_one({
+            '_id': price_id_obj,
+            'customer_id': {'$in': [ObjectId(cid) if isinstance(cid, str) else cid for cid in customer_ids]}
+        })
+        
+        if not customer_price_doc:
             return jsonify({'success': False, 'error': 'Price not found'}), 404
         
-        db.session.delete(customer_price)
-        db.session.commit()
+        db['customer_product_prices'].delete_one({'_id': price_id_obj})
         
         return jsonify({'success': True, 'message': 'Customer price deleted successfully'})
     
     except Exception as e:
-        db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500

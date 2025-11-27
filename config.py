@@ -3,8 +3,7 @@ from datetime import timedelta
 
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///app.db'
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    MONGO_URI = os.environ.get('MONGO_URI') or 'mongodb+srv://amenityforge_db_user:qcTX55G2K6ct36Ij@cluster0.ibp4qe2.mongodb.net/GST-1?appName=Cluster0'
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     
     # CORS settings
@@ -50,7 +49,7 @@ class ProductionConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    MONGO_URI = 'mongodb://localhost:27017/test_db'
     WTF_CSRF_ENABLED = False
 
 config = {

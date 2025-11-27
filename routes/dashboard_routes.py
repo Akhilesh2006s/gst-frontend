@@ -1,7 +1,8 @@
 from flask import Blueprint, render_template, jsonify
 from flask_login import login_required, current_user
-from models import db, Invoice, Product, Customer, StockMovement
-from sqlalchemy import func, desc
+from models import Invoice, Product, Customer, StockMovement
+from database import db
+from bson import ObjectId
 from datetime import datetime, timedelta
 import calendar
 
@@ -16,67 +17,99 @@ def index():
     current_month = now.month
     current_year = now.year
     
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    
     # Sales summary for current month
-    monthly_sales = db.session.query(
-        func.sum(Invoice.total_amount).label('total_sales'),
-        func.count(Invoice.id).label('total_invoices'),
-        func.sum(Invoice.cgst_amount + Invoice.sgst_amount + Invoice.igst_amount).label('total_gst')
-    ).filter(
-        Invoice.user_id == current_user.id,
-        func.extract('month', Invoice.invoice_date) == current_month,
-        func.extract('year', Invoice.invoice_date) == current_year,
-        Invoice.status == 'paid'
-    ).first()
+    monthly_sales_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'status': 'paid',
+            '$expr': {
+                '$and': [
+                    {'$eq': [{'$month': '$invoice_date'}, current_month]},
+                    {'$eq': [{'$year': '$invoice_date'}, current_year]}
+                ]
+            }
+        }},
+        {'$group': {
+            '_id': None,
+            'total_sales': {'$sum': '$total_amount'},
+            'total_invoices': {'$sum': 1},
+            'total_gst': {'$sum': {'$add': ['$cgst_amount', '$sgst_amount', '$igst_amount']}}
+        }}
+    ]
+    monthly_sales_result = list(db['invoices'].aggregate(monthly_sales_pipeline))
+    monthly_sales = monthly_sales_result[0] if monthly_sales_result else {'total_sales': 0, 'total_invoices': 0, 'total_gst': 0}
     
     # Inventory summary
-    inventory_summary = db.session.query(
-        func.count(Product.id).label('total_products'),
-        func.sum(Product.stock_quantity * Product.price).label('stock_value'),
-        func.count(Product.id).filter(Product.is_low_stock).label('low_stock_count')
-    ).filter(
-        Product.user_id == current_user.id,
-        Product.is_active == True
-    ).first()
+    inventory_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'is_active': True
+        }},
+        {'$group': {
+            '_id': None,
+            'total_products': {'$sum': 1},
+            'stock_value': {'$sum': {'$multiply': ['$stock_quantity', '$price']}},
+            'low_stock_count': {
+                '$sum': {
+                    '$cond': [
+                        {'$lte': ['$stock_quantity', '$min_stock_level']},
+                        1,
+                        0
+                    ]
+                }
+            }
+        }}
+    ]
+    inventory_result = list(db['products'].aggregate(inventory_pipeline))
+    inventory_summary = inventory_result[0] if inventory_result else {'total_products': 0, 'stock_value': 0, 'low_stock_count': 0}
     
     # Customer count
-    customer_count = Customer.query.filter_by(
-        user_id=current_user.id, 
-        is_active=True
-    ).count()
+    customer_count = db['customers'].count_documents({
+        'user_id': user_id_obj,
+        'is_active': True
+    })
     
     # Recent invoices
-    recent_invoices = Invoice.query.filter_by(
-        user_id=current_user.id
-    ).order_by(desc(Invoice.created_at)).limit(5).all()
+    recent_invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(
+        {'user_id': user_id_obj}
+    ).sort('created_at', -1).limit(5)]
     
     # Low stock products
-    low_stock_products = Product.query.filter_by(
-        user_id=current_user.id,
-        is_active=True
-    ).filter(
-        Product.stock_quantity <= Product.min_stock_level
-    ).limit(5).all()
+    low_stock_products = [Product.from_dict(doc) for doc in db['products'].find({
+        'user_id': user_id_obj,
+        'is_active': True,
+        '$expr': {'$lte': ['$stock_quantity', '$min_stock_level']}
+    }).limit(5)]
     
     # Top selling products (last 30 days)
     thirty_days_ago = now - timedelta(days=30)
-    top_products = db.session.query(
-        Product.name,
-        func.sum(InvoiceItem.quantity).label('total_sold')
-    ).join(InvoiceItem).join(Invoice).filter(
-        Invoice.user_id == current_user.id,
-        Invoice.invoice_date >= thirty_days_ago,
-        Invoice.status == 'paid'
-    ).group_by(Product.id, Product.name).order_by(
-        desc(func.sum(InvoiceItem.quantity))
-    ).limit(5).all()
+    top_products_pipeline = [
+        {'$match': {
+            'user_id': user_id_obj,
+            'invoice_date': {'$gte': thirty_days_ago},
+            'status': 'paid'
+        }},
+        {'$unwind': '$items'},
+        {'$group': {
+            '_id': '$items.product_id',
+            'total_sold': {'$sum': '$items.quantity'},
+            'product_name': {'$first': '$items.product_name'}
+        }},
+        {'$sort': {'total_sold': -1}},
+        {'$limit': 5}
+    ]
+    top_products_result = list(db['invoices'].aggregate(top_products_pipeline))
+    top_products = [{'name': p.get('product_name', 'Unknown'), 'total_sold': p.get('total_sold', 0)} for p in top_products_result]
     
     dashboard_data = {
-        'monthly_sales': monthly_sales.total_sales or 0,
-        'total_invoices': monthly_sales.total_invoices or 0,
-        'total_gst': monthly_sales.total_gst or 0,
-        'total_products': inventory_summary.total_products or 0,
-        'stock_value': inventory_summary.stock_value or 0,
-        'low_stock_count': inventory_summary.low_stock_count or 0,
+        'monthly_sales': monthly_sales.get('total_sales', 0) or 0,
+        'total_invoices': monthly_sales.get('total_invoices', 0) or 0,
+        'total_gst': monthly_sales.get('total_gst', 0) or 0,
+        'total_products': inventory_summary.get('total_products', 0) or 0,
+        'stock_value': inventory_summary.get('stock_value', 0) or 0,
+        'low_stock_count': inventory_summary.get('low_stock_count', 0) or 0,
         'customer_count': customer_count,
         'recent_invoices': recent_invoices,
         'low_stock_products': low_stock_products,
@@ -100,14 +133,25 @@ def sales_chart():
             month += 12
             year -= 1
         
-        sales = db.session.query(
-            func.sum(Invoice.total_amount).label('total_sales')
-        ).filter(
-            Invoice.user_id == current_user.id,
-            func.extract('month', Invoice.invoice_date) == month,
-            func.extract('year', Invoice.invoice_date) == year,
-            Invoice.status == 'paid'
-        ).scalar() or 0
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+        sales_pipeline = [
+            {'$match': {
+                'user_id': user_id_obj,
+                'status': 'paid',
+                '$expr': {
+                    '$and': [
+                        {'$eq': [{'$month': '$invoice_date'}, month]},
+                        {'$eq': [{'$year': '$invoice_date'}, year]}
+                    ]
+                }
+            }},
+            {'$group': {
+                '_id': None,
+                'total_sales': {'$sum': '$total_amount'}
+            }}
+        ]
+        sales_result = list(db['invoices'].aggregate(sales_pipeline))
+        sales = sales_result[0].get('total_sales', 0) if sales_result else 0
         
         sales_data.append({
             'month': calendar.month_abbr[month],
@@ -124,10 +168,10 @@ def sales_chart():
 def inventory_chart():
     """API endpoint for inventory chart data"""
     # Get products with their stock values
-    products = Product.query.filter_by(
-        user_id=current_user.id,
-        is_active=True
-    ).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    products = [Product.from_dict(doc) for doc in db['products'].find(
+        {'user_id': user_id_obj, 'is_active': True}
+    )]
     
     inventory_data = []
     for product in products:
@@ -148,35 +192,43 @@ def inventory_chart():
 def recent_activity():
     """API endpoint for recent activity"""
     # Get recent invoices
-    recent_invoices = Invoice.query.filter_by(
-        user_id=current_user.id
-    ).order_by(desc(Invoice.created_at)).limit(10).all()
+    user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
+    recent_invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(
+        {'user_id': user_id_obj}
+    ).sort('created_at', -1).limit(10)]
     
     # Get recent stock movements
-    recent_movements = StockMovement.query.join(Product).filter(
-        Product.user_id == current_user.id
-    ).order_by(desc(StockMovement.created_at)).limit(10).all()
+    # First get product IDs for this user
+    product_ids = [ObjectId(doc['_id']) for doc in db['products'].find(
+        {'user_id': user_id_obj},
+        {'_id': 1}
+    )]
+    recent_movements = [StockMovement.from_dict(doc) for doc in db['stock_movements'].find(
+        {'product_id': {'$in': product_ids}}
+    ).sort('created_at', -1).limit(10)]
     
     activity_data = []
     
     # Add invoices to activity
     for invoice in recent_invoices:
+        customer = Customer.find_by_id(invoice.customer_id)
         activity_data.append({
             'type': 'invoice',
-            'message': f'Invoice {invoice.invoice_number} created for {invoice.customer.name}',
-            'amount': float(invoice.total_amount),
-            'date': invoice.created_at.strftime('%Y-%m-%d %H:%M'),
-            'status': invoice.status
+            'message': f'Invoice {invoice.invoice_number} created for {customer.name if customer else "Unknown"}',
+            'amount': float(invoice.total_amount) if invoice.total_amount else 0,
+            'date': invoice.created_at.strftime('%Y-%m-%d %H:%M') if invoice.created_at else '',
+            'status': invoice.status or 'pending'
         })
     
     # Add stock movements to activity
     for movement in recent_movements:
+        product = Product.find_by_id(movement.product_id)
         activity_data.append({
             'type': 'stock',
-            'message': f'{movement.movement_type.title()} {movement.quantity} units of {movement.product.name}',
+            'message': f'{movement.movement_type.title()} {movement.quantity} units of {product.name if product else "Unknown"}',
             'quantity': movement.quantity,
-            'date': movement.created_at.strftime('%Y-%m-%d %H:%M'),
-            'reference': movement.reference
+            'date': movement.created_at.strftime('%Y-%m-%d %H:%M') if movement.created_at else '',
+            'reference': movement.reference or ''
         })
     
     # Sort by date and take most recent 15

@@ -2,7 +2,7 @@ from flask import Flask, render_template, send_from_directory, jsonify, request,
 from flask_cors import CORS
 import os
 from config import config
-from database import db, migrate
+from database import init_app as init_db
 from flask_login import LoginManager
 from models import User
 from reportlab.lib.pagesizes import letter, A4
@@ -45,20 +45,16 @@ def create_app(config_name='development'):
         }
     })
     
-    # Initialize extensions
-    db.init_app(app)
-    migrate.init_app(app, db)
-    
-    # Initialize database tables (with error handling)
+    # Initialize MongoDB connection
     try:
-        with app.app_context():
-            db.create_all()
+        from database import init_app as init_db
+        init_db(app)
     except Exception as e:
         # Log error but don't fail app startup - health check should still work
         import logging
-        logging.warning(f"Database initialization warning: {e}")
+        logging.warning(f"MongoDB initialization warning: {e}")
         # Print to stdout for container logs
-        print(f"WARNING: Database initialization issue (app will continue): {e}")
+        print(f"WARNING: MongoDB initialization issue (app will continue): {e}")
     
     # Initialize login manager
     login_manager = LoginManager()
@@ -69,16 +65,16 @@ def create_app(config_name='development'):
     def load_user(user_id):
         # Try to load super admin first, then admin user, then customer
         from models import SuperAdmin
-        super_admin = SuperAdmin.query.get(int(user_id))
+        super_admin = SuperAdmin.find_by_id(user_id)
         if super_admin:
             return super_admin
         
-        user = User.query.get(int(user_id))
+        user = User.find_by_id(user_id)
         if user:
             return user
         
         from models import Customer
-        customer = Customer.query.get(int(user_id))
+        customer = Customer.find_by_id(user_id)
         return customer
     
     # Allow OPTIONS requests globally to avoid login redirects during CORS preflight
