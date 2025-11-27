@@ -494,13 +494,13 @@ class Invoice:
         
         if customer_state == business_state:
             # Same state - CGST + SGST
-                total_gst = sum(item.get('gst_amount', 0) for item in self.items)
+            total_gst = sum(item.get('gst_amount', 0) for item in self.items)
             self.cgst_amount = total_gst / 2
             self.sgst_amount = total_gst / 2
             self.igst_amount = 0.0
         else:
             # Different state - IGST
-                self.igst_amount = sum(item.get('gst_amount', 0) for item in self.items)
+            self.igst_amount = sum(item.get('gst_amount', 0) for item in self.items)
             self.cgst_amount = 0.0
             self.sgst_amount = 0.0
         
