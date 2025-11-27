@@ -45,6 +45,17 @@ def create_app(config_name='development'):
     db.init_app(app)
     migrate.init_app(app, db)
     
+    # Initialize database tables (with error handling)
+    try:
+        with app.app_context():
+            db.create_all()
+    except Exception as e:
+        # Log error but don't fail app startup - health check should still work
+        import logging
+        logging.warning(f"Database initialization warning: {e}")
+        # Print to stdout for container logs
+        print(f"WARNING: Database initialization issue (app will continue): {e}")
+    
     # Initialize login manager
     login_manager = LoginManager()
     login_manager.init_app(app)
@@ -77,6 +88,12 @@ def create_app(config_name='development'):
             response.headers.add('Access-Control-Allow-Credentials', "true")
             return response
 
+    # Health check endpoint - register early before catch-all routes
+    @app.route('/health')
+    def health():
+        """Health check endpoint for Railway/deployment"""
+        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'}), 200
+    
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
@@ -224,22 +241,16 @@ def create_app(config_name='development'):
             return jsonify({'error': str(e)}), 500
     
     # Serve React app (only for production)
-    @app.route('/')
-    def health_check():
-        """Simple health check endpoint"""
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
-
-    @app.route('/health')
-    def health():
-        """Health check endpoint for Railway"""
-        return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'})
-
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve(path):
-        # Skip API routes
+        # Skip API routes and health endpoint
         if path.startswith('api/'):
-            return {'error': 'API route not found'}, 404
+            return jsonify({'error': 'API route not found'}), 404
+        
+        # Skip health endpoint (already handled above)
+        if path == 'health':
+            return jsonify({'status': 'healthy', 'message': 'GST Billing System API is running'}), 200
             
         if path != "" and os.path.exists(app.static_folder + '/' + path):
             return send_from_directory(app.static_folder, path)
