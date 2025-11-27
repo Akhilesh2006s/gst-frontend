@@ -2,7 +2,7 @@ import requests
 import json
 
 def test_railway_backend():
-    base_url = "https://web-production-84a3.up.railway.app"
+    base_url = "https://web-production-f50e6.up.railway.app"
     
     print("Testing Railway Backend Status...")
     print("=" * 50)

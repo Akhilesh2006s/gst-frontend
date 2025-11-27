@@ -1,7 +1,7 @@
 import requests
 import json
 
-base_url = 'https://web-production-84a3.up.railway.app'
+base_url = 'https://web-production-f50e6.up.railway.app'
 
 print("Testing Railway API Directly...")
 print("=" * 50)

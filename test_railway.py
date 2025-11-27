@@ -7,7 +7,7 @@ import requests
 import json
 
 def test_railway():
-    base_url = "https://web-production-84a3.up.railway.app"
+    base_url = "https://web-production-f50e6.up.railway.app"
     
     # Test health endpoint
     print("Testing health endpoint...")
