@@ -3,6 +3,11 @@ from flask_login import login_required, current_user
 from models import Invoice, InvoiceItem, Product, Customer, StockMovement
 from database import db
 from bson import ObjectId
+
+def get_db():
+    """Get database instance"""
+    from database import db as database
+    return database
 from forms import InvoiceForm
 from datetime import datetime, date
 import json
@@ -420,24 +425,48 @@ def calculate_invoice():
 @invoice_bp.route('/', methods=['GET'])
 @login_required
 def get_invoices():
-    """Get all invoices for the current admin"""
+    """Get all invoices for the current admin or customer"""
     try:
         # Check if user is authenticated
         if not current_user or not hasattr(current_user, 'id'):
             return jsonify({'success': False, 'error': 'User not authenticated'}), 401
         
-        user_id = current_user.id
-        customer_id = request.args.get('customer_id', type=int)
+        # Determine if current_user is a Customer or Admin/User
+        # Check by trying to find customer record - more reliable than isinstance
+        from models import Customer
+        customer = Customer.find_by_id(current_user.id)
+        is_customer = False
+        if customer is not None:
+            # Check if this is actually a customer (has user_id pointing to admin)
+            if hasattr(customer, 'user_id') and customer.user_id is not None:
+                is_customer = True
+            # Also check collection_name as fallback
+            elif hasattr(customer, 'collection_name') and customer.collection_name == 'customers':
+                is_customer = True
         
-        # Build query
-        query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
+        print(f"Invoice - Customer detection: customer={customer}, is_customer={is_customer}, user_id={current_user.id}")
         
-        # Filter by customer if customer_id is provided
-        if customer_id:
-            query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
+        if is_customer:
+            # For customers, only show their own invoices
+            customer_id = current_user.id
+            query = {'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id}
+        else:
+            # For admins, show all invoices for their business
+            user_id = current_user.id
+            query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
+            
+            # Filter by customer if customer_id is provided
+            customer_id = request.args.get('customer_id', type=int)
+            if customer_id:
+                query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
+        
+        # Get database instance
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
         
         # Order by created_at
-        invoices = [Invoice.from_dict(doc) for doc in db['invoices'].find(query).sort('created_at', -1)]
+        invoices = [Invoice.from_dict(doc) for doc in database['invoices'].find(query).sort('created_at', -1)]
         invoices_data = []
         
         for invoice in invoices:

@@ -2,6 +2,11 @@ from flask import Blueprint, render_template, request, flash, redirect, url_for,
 from flask_login import login_required, current_user
 from models import Product, StockMovement, CustomerProductPrice, Customer
 from database import db
+
+def get_db():
+    """Get database instance"""
+    from database import db as database
+    return database
 from bson import ObjectId
 from forms import ProductForm, StockMovementForm
 from datetime import datetime
@@ -111,15 +116,43 @@ def api_get_products():
         if not current_user or not hasattr(current_user, 'id'):
             return jsonify({'success': False, 'error': 'User not authenticated'}), 401
         
-        user_id = current_user.id
-        print(f"Products API called by user: {user_id}")
+        # Determine if current_user is a Customer or Admin/User
+        # Check by trying to find customer record - more reliable than isinstance
+        from models import Customer
+        database = get_db()
+        # Try to find customer in database directly
+        customer_doc = database['customers'].find_one({'_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id})
+        is_customer = customer_doc is not None
+        
+        if is_customer:
+            customer = Customer.from_dict(customer_doc) if customer_doc else None
+            print(f"Customer found: {customer_doc.get('name') if customer_doc else 'None'}, user_id={customer_doc.get('user_id') if customer_doc else 'None'}")
+        else:
+            customer = None
+            print(f"No customer found for ID: {current_user.id}, checking if admin/user")
+        
+        print(f"Customer detection: is_customer={is_customer}, user_id={current_user.id}")
+        
+        if is_customer:
+            # For customers, get their admin's user_id
+            if not customer.user_id:
+                return jsonify({'success': False, 'error': 'Customer not associated with an admin'}), 404
+            user_id = customer.user_id
+            # Customers should only see active products
+            query = {
+                'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
+                'is_active': True
+            }
+            customer_id = current_user.id  # Use the logged-in customer's ID for pricing
+        else:
+            # For admins, use their own user_id
+            user_id = current_user.id
+            query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
+            customer_id = request.args.get('customer_id', type=int)  # Optional customer ID for customer-specific pricing
+        
+        print(f"Products API called by user: {user_id} (customer: {is_customer})")
         search = request.args.get('search', '')
         category = request.args.get('category', '')
-        customer_id = request.args.get('customer_id', type=int)  # Optional customer ID for customer-specific pricing
-        
-        # Get all products (active and inactive) so admin can manage visibility
-        # Customers will only see active products via their endpoint
-        query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
         
         if search:
             query['$or'] = [
@@ -131,7 +164,12 @@ def api_get_products():
         if category and category != 'All':
             query['category'] = category
         
-        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
+        # Get database instance
+        database = get_db() if 'get_db' in globals() else db
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        products = [Product.from_dict(doc) for doc in database['products'].find(query).sort('name', 1)]
         print(f"Found {len(products)} products for user {user_id}")
         
         # Return only the fields needed for products page

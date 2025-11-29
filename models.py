@@ -2,7 +2,11 @@ from datetime import datetime
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
-from database import db
+
+def get_db():
+    """Get the database instance dynamically"""
+    from database import db
+    return db
 
 class BaseModel:
     """Base model for MongoDB documents"""
@@ -70,7 +74,18 @@ class User(UserMixin):
         self.approved_by = kwargs.get('approved_by')
         self.approved_at = kwargs.get('approved_at')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
-        self.is_active = kwargs.get('is_active', True)
+        # Use __dict__ to set is_active since UserMixin has it as a property
+        self.__dict__['is_active'] = kwargs.get('is_active', True)
+    
+    @property
+    def is_active(self):
+        """Override UserMixin's is_active property to make it settable"""
+        return self.__dict__.get('is_active', True)
+    
+    @is_active.setter
+    def is_active(self, value):
+        """Allow setting is_active"""
+        self.__dict__['is_active'] = value
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -79,8 +94,7 @@ class User(UserMixin):
         return check_password_hash(self.password_hash, password)
     
     def to_dict(self):
-        return {
-            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+        data = {
             'username': self.username,
             'email': self.email,
             'password_hash': self.password_hash,
@@ -98,35 +112,68 @@ class User(UserMixin):
             'created_at': self.created_at,
             'is_active': self.is_active
         }
+        # Only include _id if it exists and is valid
+        if self.id:
+            if isinstance(self.id, str) and ObjectId.is_valid(self.id):
+                data['_id'] = ObjectId(self.id)
+            else:
+                data['_id'] = self.id
+        return data
     
     @classmethod
     def from_dict(cls, data):
         if data is None:
             return None
-        if '_id' in data:
-            data['id'] = str(data['_id'])
-        return cls(**data)
+        if not isinstance(data, dict):
+            return None
+        # Create a copy to avoid modifying the original
+        user_data = data.copy()
+        if '_id' in user_data:
+            user_data['id'] = str(user_data['_id']) if user_data['_id'] is not None else None
+            # Remove _id from kwargs to avoid passing it to __init__
+            if '_id' in user_data:
+                del user_data['_id']
+        try:
+            return cls(**user_data)
+        except Exception as e:
+            print(f"Error creating User from dict: {e}")
+            print(f"Data: {user_data}")
+            raise
     
     def save(self):
         """Save user to MongoDB"""
         try:
+            db = get_db()
             if db is None:
                 raise ValueError("Database not initialized. Call init_app() first.")
             data = self.to_dict()
-            if '_id' in data and data['_id']:
-                db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
+            # Remove _id from data if it's None or empty for insert operations
+            if '_id' in data and (data['_id'] is None or not data['_id']):
+                del data['_id']
+            
+            if self.id and '_id' in data and data['_id']:
+                # Update existing document
+                update_data = {k: v for k, v in data.items() if k != '_id'}
+                db[self.collection_name].update_one({'_id': data['_id']}, {'$set': update_data})
             else:
+                # Insert new document
                 result = db[self.collection_name].insert_one(data)
-                self.id = str(result.inserted_id)
+                if result is not None and hasattr(result, 'inserted_id') and result.inserted_id:
+                    self.id = str(result.inserted_id)
+                else:
+                    raise ValueError("Failed to insert document: result is None or missing inserted_id")
             return self
         except Exception as e:
+            import traceback
             print(f"Error saving user: {e}")
+            traceback.print_exc()
             raise
     
     @classmethod
     def find_by_id(cls, user_id):
         """Find user by ID"""
         try:
+            db = get_db()
             if db is None:
                 return None
             if not user_id:
@@ -142,6 +189,7 @@ class User(UserMixin):
     def find_by_email(cls, email):
         """Find user by email"""
         try:
+            db = get_db()
             if db is None:
                 return None
             doc = db[cls.collection_name].find_one({'email': email})
@@ -154,9 +202,17 @@ class User(UserMixin):
     @classmethod
     def find_by_username(cls, username):
         """Find user by username"""
-        doc = db[cls.collection_name].find_one({'username': username})
-        if doc:
-            return cls.from_dict(doc)
+        try:
+            db = get_db()
+            if db is None:
+                return None
+            if not username:
+                return None
+            doc = db[cls.collection_name].find_one({'username': username})
+            if doc:
+                return cls.from_dict(doc)
+        except Exception as e:
+            print(f"Error finding user by username: {e}")
         return None
     
     def __repr__(self):
@@ -173,7 +229,18 @@ class SuperAdmin(UserMixin):
         self.password_hash = kwargs.get('password_hash')
         self.name = kwargs.get('name')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
-        self.is_active = kwargs.get('is_active', True)
+        # Use __dict__ to set is_active since UserMixin has it as a property
+        self.__dict__['is_active'] = kwargs.get('is_active', True)
+    
+    @property
+    def is_active(self):
+        """Override UserMixin's is_active property to make it settable"""
+        return self.__dict__.get('is_active', True)
+    
+    @is_active.setter
+    def is_active(self, value):
+        """Allow setting is_active"""
+        self.__dict__['is_active'] = value
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -201,6 +268,9 @@ class SuperAdmin(UserMixin):
     
     def save(self):
         """Save super admin to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
@@ -213,6 +283,9 @@ class SuperAdmin(UserMixin):
     def find_by_id(cls, admin_id):
         """Find super admin by ID"""
         try:
+            db = get_db()
+            if db is None:
+                return None
             doc = db[cls.collection_name].find_one({'_id': ObjectId(admin_id)})
             if doc:
                 return cls.from_dict(doc)
@@ -223,6 +296,9 @@ class SuperAdmin(UserMixin):
     @classmethod
     def find_by_email(cls, email):
         """Find super admin by email"""
+        db = get_db()
+        if db is None:
+            return None
         doc = db[cls.collection_name].find_one({'email': email})
         if doc:
             return cls.from_dict(doc)
@@ -260,7 +336,18 @@ class Customer(UserMixin):
         self.tags = kwargs.get('tags')
         self.cc_emails = kwargs.get('cc_emails')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
-        self.is_active = kwargs.get('is_active', True)
+        # Use __dict__ to set is_active since UserMixin has it as a property
+        self.__dict__['is_active'] = kwargs.get('is_active', True)
+    
+    @property
+    def is_active(self):
+        """Override UserMixin's is_active property to make it settable"""
+        return self.__dict__.get('is_active', True)
+    
+    @is_active.setter
+    def is_active(self, value):
+        """Allow setting is_active"""
+        self.__dict__['is_active'] = value
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -309,6 +396,7 @@ class Customer(UserMixin):
     def save(self):
         """Save customer to MongoDB"""
         try:
+            db = get_db()
             if db is None:
                 raise ValueError("Database not initialized. Call init_app() first.")
             data = self.to_dict()
@@ -326,6 +414,9 @@ class Customer(UserMixin):
     def find_by_id(cls, customer_id):
         """Find customer by ID"""
         try:
+            db = get_db()
+            if db is None:
+                return None
             doc = db[cls.collection_name].find_one({'_id': ObjectId(customer_id)})
             if doc:
                 return cls.from_dict(doc)
@@ -337,6 +428,7 @@ class Customer(UserMixin):
     def find_by_email(cls, email):
         """Find customer by email"""
         try:
+            db = get_db()
             if db is None:
                 return None
             doc = db[cls.collection_name].find_one({'email': email})
@@ -432,6 +524,9 @@ class Product:
     
     def save(self):
         """Save product to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         data['updated_at'] = datetime.utcnow()
         if '_id' in data and data['_id']:
@@ -444,6 +539,9 @@ class Product:
     @classmethod
     def find_by_id(cls, product_id):
         """Find product by ID"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         try:
             doc = db[cls.collection_name].find_one({'_id': ObjectId(product_id)})
             if doc:
@@ -544,6 +642,9 @@ class Invoice:
     
     def save(self):
         """Save invoice to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         data['updated_at'] = datetime.utcnow()
         if '_id' in data and data['_id']:
@@ -556,6 +657,9 @@ class Invoice:
     @classmethod
     def find_by_id(cls, invoice_id):
         """Find invoice by ID"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         try:
             doc = db[cls.collection_name].find_one({'_id': ObjectId(invoice_id)})
             if doc:
@@ -612,6 +716,9 @@ class InvoiceItem:
     
     def save(self):
         """Save invoice item to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
@@ -660,6 +767,9 @@ class StockMovement:
     
     def save(self):
         """Save stock movement to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
@@ -716,6 +826,9 @@ class GSTReport:
     
     def save(self):
         """Save GST report to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
@@ -777,6 +890,9 @@ class Order:
     
     def save(self):
         """Save order to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         data['updated_at'] = datetime.utcnow()
         if '_id' in data and data['_id']:
@@ -789,6 +905,9 @@ class Order:
     @classmethod
     def find_by_id(cls, order_id):
         """Find order by ID"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         try:
             doc = db[cls.collection_name].find_one({'_id': ObjectId(order_id)})
             if doc:
@@ -841,6 +960,9 @@ class OrderItem:
     
     def save(self):
         """Save order item to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
@@ -889,6 +1011,9 @@ class CustomerProductPrice:
     
     def save(self):
         """Save customer product price to MongoDB"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         data['updated_at'] = datetime.utcnow()
         if '_id' in data and data['_id']:
@@ -901,6 +1026,9 @@ class CustomerProductPrice:
     @classmethod
     def find_by_customer_and_product(cls, customer_id, product_id):
         """Find price by customer and product"""
+        db = get_db()
+        if db is None:
+            raise ValueError("Database not initialized. Call init_app() first.")
         try:
             doc = db[cls.collection_name].find_one({
                 'customer_id': ObjectId(customer_id) if isinstance(customer_id, str) else customer_id,

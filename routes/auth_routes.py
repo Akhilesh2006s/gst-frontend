@@ -60,36 +60,52 @@ def register():
     """Admin registration"""
     try:
         data = request.get_json()
-        if not data:
+        if not data or not isinstance(data, dict):
             return jsonify({'success': False, 'message': 'No data provided'}), 400
         
         if 'email' not in data or 'password' not in data:
             return jsonify({'success': False, 'message': 'Email and password are required'}), 400
         
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        
+        if not email or not password:
+            return jsonify({'success': False, 'message': 'Email and password are required'}), 400
+        
         # Check if username or email already exists
-        username = data.get('name', data.get('username', data['email']))
+        username = data.get('name') or data.get('username') or email.split('@')[0] if '@' in email else email
+        username = username.strip() if username else email.split('@')[0] if '@' in email else email
+        
         if username and User.find_by_username(username):
             return jsonify({'success': False, 'message': 'Username already exists'}), 400
         
-        if User.find_by_email(data['email']):
+        if User.find_by_email(email):
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
+        
+        # Check database connection
+        from database import db
+        if db is None:
+            return jsonify({'success': False, 'message': 'Database not initialized'}), 500
         
          # Create new admin user (auto-approved)
         user = User(
             username=username,
-            email=data['email'],
+            email=email,
             business_name=data.get('business_name', 'My Business'),
             gst_number=data.get('gst_number', '00AAAAA0000A1Z5'),
             business_address=data.get('business_address', 'Business Address'),
             business_phone=data.get('business_phone', '1234567890'),
-            business_email=data['email'],
+            business_email=email,
             business_state=data.get('business_state', 'Delhi'),
             business_pincode=data.get('business_pincode', '110001'),
-             business_reason=data.get('business_reason', 'Business reason not provided'),
-             is_approved=True
+            business_reason=data.get('business_reason', 'Business reason not provided'),
+            is_approved=True
         )
-        user.set_password(data['password'])
+        user.set_password(password)
         user.save()
+        
+        if not user.id:
+            return jsonify({'success': False, 'message': 'Failed to create user'}), 500
         
         return jsonify({
             'success': True,

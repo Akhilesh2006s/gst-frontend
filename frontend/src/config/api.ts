@@ -4,12 +4,12 @@ const getApiBaseUrl = (): string => {
   // Check for environment variable first
   if (import.meta.env.VITE_API_URL) {
     const url = import.meta.env.VITE_API_URL;
-    // Ensure no trailing slash and use HTTPS
-    return url.replace(/\/$/, '').replace(/^http:/, 'https:');
+    // Ensure no trailing slash
+    return url.replace(/\/$/, '');
   }
   
-  // Always use HTTPS Railway backend URL
-  const baseUrl = 'https://web-production-f50e6.up.railway.app/api';
+  // Default to localhost for development
+  const baseUrl = 'http://localhost:5000/api';
   // Ensure no trailing slash
   return baseUrl.replace(/\/$/, '');
 };

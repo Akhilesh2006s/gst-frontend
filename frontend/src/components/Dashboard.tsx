@@ -69,7 +69,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       
       // Fetch products - use URL without trailing slash (Flask now accepts both)
-      const productsUrl = `${API_BASE_URL}/products`.replace(/^http:/, 'https:');
+      const productsUrl = `${API_BASE_URL}/products`;
       try {
         const productsResponse = await fetch(productsUrl, {
           method: 'GET',
@@ -98,7 +98,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       }
 
       // Fetch invoices - use URL without trailing slash (Flask now accepts both)
-      const invoicesUrl = `${API_BASE_URL}/invoices`.replace(/^http:/, 'https:');
+      const invoicesUrl = `${API_BASE_URL}/invoices`;
       try {
         const invoicesResponse = await fetch(invoicesUrl, {
           method: 'GET',
