@@ -30,34 +30,51 @@ def get_customers():
         
         print(f"[DEBUG] User ID: {current_user.id}")
         
-        # Show all customers so admin can see everyone, including those who registered via customer login
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Show ALL customers so admin can see everyone, including those who registered via customer login
         # This includes customers created by admin and customers who registered through customer login
-        # Filter by user_id if it exists, otherwise show all
         try:
-            # Get customers that belong to this user OR have no user_id (for backward compatibility)
-            query = {
-                '$or': [
-                    {'user_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id},
-                    {'user_id': None}
-                ]
-            }
-            customers = [Customer.from_dict(doc) for doc in db['customers'].find(query)]
+            # Get ALL customers - no filtering by user_id so admin can see all customers
+            query = {}
+            
+            # Limit to prevent performance issues
+            customers_docs = list(database['customers'].find(query).sort('name', 1).limit(1000))
+            customers = []
+            for doc in customers_docs:
+                if not isinstance(doc, dict):
+                    print(f"Warning: Skipping non-dict customer document: {doc}")
+                    continue
+                customer = Customer.from_dict(doc)
+                if customer:
+                    customers.append(customer)
+                else:
+                    print(f"Warning: Customer.from_dict returned None for document: {doc}")
         except Exception as query_error:
+            import traceback
             print(f"Query error: {str(query_error)}")
-            # Fallback: try to get all customers
-            try:
-                customers = [Customer.from_dict(doc) for doc in db['customers'].find()]
-            except Exception as fallback_error:
-                print(f"Fallback query error: {str(fallback_error)}")
-                customers = []
+            traceback.print_exc()
+            customers = []
         
         customers_data = []
         
+        # Process customers with error handling to prevent one failure from blocking all
         for customer in customers:
             try:
                 # Safely access all fields with null checks
+                customer_id = customer.id if hasattr(customer, 'id') and customer.id else None
+                if not customer_id:
+                    print(f"Warning: Skipping customer with no ID: {customer}")
+                    continue
+                
+                # Skip counting for list view - it's too slow. Counts are available in detail view.
+                # This makes the list load much faster
                 customers_data.append({
-                    'id': customer.id,
+                    'id': str(customer_id),  # Ensure ID is string for frontend
                     'name': getattr(customer, 'name', '') or '',
                     'email': getattr(customer, 'email', '') or '',
                     'phone': getattr(customer, 'phone', '') or '',
@@ -67,8 +84,8 @@ def get_customers():
                     'pincode': getattr(customer, 'pincode', '') or '',
                     'gstin': getattr(customer, 'gstin', '') or '',
                     'company_name': getattr(customer, 'company_name', '') or '',
-                    'created_at': customer.created_at.isoformat() if customer.created_at else datetime.utcnow().isoformat(),
-                    'is_active': getattr(customer, 'is_active', True) if getattr(customer, 'is_active', True) is not None else True
+                    'created_at': customer.created_at.isoformat() if hasattr(customer, 'created_at') and customer.created_at else datetime.utcnow().isoformat(),
+                    'is_active': getattr(customer, 'is_active', True) if getattr(customer, 'is_active', None) is not None else True
                 })
             except Exception as customer_error:
                 print(f"Error processing customer {getattr(customer, 'id', 'unknown')}: {str(customer_error)}")
@@ -182,21 +199,81 @@ def create_customer():
         print(f"[CREATE CUSTOMER] Full traceback:\n{error_trace}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@admin_bp.route('/customers/<int:customer_id>', methods=['GET'])
+@admin_bp.route('/customers/<customer_id>', methods=['GET'])
 @login_required
 def get_customer(customer_id):
     """Get specific customer details - admins can view all customers"""
     try:
+        # Convert customer_id to string if needed (MongoDB uses string ObjectIds)
+        customer_id_str = str(customer_id)
         # Allow admins to view all customers, not just their own
-        customer = Customer.find_by_id(customer_id)
+        customer = Customer.find_by_id(customer_id_str)
         
         if not customer:
             return jsonify({'success': False, 'message': 'Customer not found'}), 404
         
+        # Get customer's orders
+        from models import get_db
+        database = get_db()
+        try:
+            customer_id_obj = ObjectId(customer_id_str) if ObjectId.is_valid(customer_id_str) else customer_id_str
+        except:
+            customer_id_obj = customer_id_str
+        
+        orders = list(database['orders'].find({'customer_id': customer_id_obj}).sort('created_at', -1).limit(20))
+        orders_data = []
+        for order_doc in orders:
+            try:
+                order = Order.from_dict(order_doc)
+                if order:
+                    orders_data.append({
+                        'id': str(order.id),
+                        'order_number': order.order_number,
+                        'order_date': order.order_date.isoformat() if order.order_date else '',
+                        'status': order.status,
+                        'total_amount': float(order.total_amount) if order.total_amount else 0,
+                        'created_at': order.created_at.isoformat() if order.created_at else ''
+                    })
+            except Exception as order_error:
+                print(f"Error processing order: {order_error}")
+                continue
+        
+        # Get products visible to this customer
+        visible_products = []
+        if hasattr(customer, 'user_id') and customer.user_id:
+            admin_user_id = customer.user_id
+            try:
+                admin_user_id_obj = ObjectId(admin_user_id) if isinstance(admin_user_id, str) and ObjectId.is_valid(admin_user_id) else admin_user_id
+                products_docs = list(database['products'].find({
+                    'user_id': admin_user_id_obj,
+                    '$or': [
+                        {'is_active': True},
+                        {'is_active': {'$exists': False}},
+                        {'is_active': None}
+                    ]
+                }).sort('name', 1).limit(100))  # Limit to 100 for performance
+                
+                for product_doc in products_docs:
+                    try:
+                        product = Product.from_dict(product_doc)
+                        if product:
+                            visible_products.append({
+                                'id': str(product.id),
+                                'name': product.name or 'Unnamed Product',
+                                'price': float(product.price or 0),
+                                'stock_quantity': product.stock_quantity or 0,
+                                'sku': product.sku or ''
+                            })
+                    except Exception as product_error:
+                        print(f"Error processing product: {product_error}")
+                        continue
+            except Exception as products_error:
+                print(f"Error getting visible products for customer {customer_id}: {products_error}")
+        
         return jsonify({
             'success': True,
             'customer': {
-                'id': customer.id,
+                'id': str(customer.id),
                 'name': customer.name,
                 'email': customer.email,
                 'phone': customer.phone,
@@ -205,12 +282,18 @@ def get_customer(customer_id):
                 'shipping_address': customer.shipping_address or customer.billing_address,
                 'state': customer.state,
                 'pincode': customer.pincode,
-                'created_at': customer.created_at.isoformat(),
-                'is_active': customer.is_active
+                'created_at': customer.created_at.isoformat() if customer.created_at else '',
+                'is_active': customer.is_active,
+                'orders': orders_data,
+                'orders_count': len(orders_data),
+                'visible_products': visible_products,
+                'visible_products_count': len(visible_products)
             }
         })
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @admin_bp.route('/customers/<int:customer_id>', methods=['PUT'])
@@ -349,6 +432,12 @@ def toggle_customer_status(customer_id):
 def get_orders():
     """Get all orders - admins see ALL orders from ALL customers"""
     try:
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
         customer_id = request.args.get('customer_id', type=int)
         
         # Get ALL orders - no filtering by admin assignment
@@ -358,45 +447,105 @@ def get_orders():
         if customer_id:
             query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
         
-        orders = [Order.from_dict(doc) for doc in db['orders'].find(query).sort('created_at', -1)]
-        print(f"[ADMIN ORDERS] Admin {current_user.id} requesting orders. Found {len(orders)} total orders in database")
+        # Convert query customer_id to ObjectId if it's a string
+        if 'customer_id' in query and isinstance(query['customer_id'], str):
+            if ObjectId.is_valid(query['customer_id']):
+                query['customer_id'] = ObjectId(query['customer_id'])
+        
+        # Limit orders to prevent performance issues
+        # Query all orders - no filtering needed, admins see all customer orders
+        orders_docs = list(database['orders'].find(query).sort('created_at', -1).limit(500))
+        print(f"[ADMIN ORDERS] Admin {current_user.id} requesting orders. Query: {query}")
+        print(f"[ADMIN ORDERS] Found {len(orders_docs)} total orders in database")
+        
+        # Also check total count without limit for debugging
+        total_count = database['orders'].count_documents(query)
+        print(f"[ADMIN ORDERS] Total orders in database (no limit): {total_count}")
+        
+        # List all order numbers for debugging
+        if total_count > 0:
+            sample_orders = list(database['orders'].find({}, {'order_number': 1, 'customer_id': 1, 'created_at': 1}).limit(10))
+            print(f"[ADMIN ORDERS] Sample orders: {[(o.get('order_number'), str(o.get('customer_id')), o.get('created_at')) for o in sample_orders]}")
+        else:
+            # If no orders found, check if collection exists and list all collections
+            collections = database.list_collection_names()
+            print(f"[ADMIN ORDERS] Available collections: {collections}")
+            if 'orders' in collections:
+                # Check if collection is empty
+                order_count_check = database['orders'].count_documents({})
+                print(f"[ADMIN ORDERS] Orders collection exists but has {order_count_check} documents")
+            else:
+                print(f"[ADMIN ORDERS] WARNING: 'orders' collection does not exist!")
+        
         orders_data = []
         
-        for order in orders:
-            print(f"[ADMIN ORDERS] Processing order {order.id}: customer_id={order.customer_id}, order_number={order.order_number}")
-            # Get customer details
-            customer = Customer.find_by_id(order.customer_id)
-            
-            # Get order items
-            items_data = []
-            order_items = [OrderItem.from_dict(doc) for doc in db['order_items'].find(
-                {'order_id': ObjectId(order.id) if isinstance(order.id, str) else order.id}
-            )]
-            for item in order_items:
-                product = Product.find_by_id(item.product_id)
-                items_data.append({
-                    'id': item.id,
-                    'product_id': item.product_id,
-                    'product_name': product.name if product else 'Unknown Product',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'total': float(item.total)
+        for order_doc in orders_docs:
+            try:
+                # Debug: print raw document
+                print(f"[ADMIN ORDERS] Raw order doc: {order_doc.get('_id')}, customer_id: {order_doc.get('customer_id')}, order_number: {order_doc.get('order_number')}")
+                
+                order = Order.from_dict(order_doc)
+                if not order:
+                    print(f"[ADMIN ORDERS] Order.from_dict returned None for doc: {order_doc.get('_id')}")
+                    continue
+                    
+                print(f"[ADMIN ORDERS] Processing order {order.id}: customer_id={order.customer_id} (type: {type(order.customer_id)}), order_number={order.order_number}")
+                # Get customer details - handle both string and ObjectId customer_id
+                customer = None
+                if order.customer_id:
+                    try:
+                        # Try to find customer by ID (handles both string and ObjectId)
+                        customer = Customer.find_by_id(str(order.customer_id))
+                        if not customer:
+                            print(f"[ADMIN ORDERS] Customer not found for customer_id: {order.customer_id}")
+                    except Exception as customer_error:
+                        print(f"[ADMIN ORDERS] Error finding customer {order.customer_id}: {customer_error}")
+                
+                # Get order items
+                items_data = []
+                order_id_obj = ObjectId(order.id) if isinstance(order.id, str) and ObjectId.is_valid(order.id) else order.id
+                order_items = [OrderItem.from_dict(doc) for doc in database['order_items'].find(
+                    {'order_id': order_id_obj}
+                )]
+                for item in order_items:
+                    product = Product.find_by_id(item.product_id)
+                    items_data.append({
+                        'id': str(item.id) if item.id else None,
+                        'product_id': str(item.product_id) if item.product_id else None,
+                        'product_name': product.name if product else 'Unknown Product',
+                        'quantity': item.quantity,
+                        'unit_price': float(item.unit_price) if item.unit_price else 0,
+                        'total': float(item.total) if item.total else 0
+                    })
+                
+                # Ensure IDs are strings - use _id from document if order.id is None
+                order_id_str = str(order.id) if order.id else str(order_doc.get('_id', ''))
+                customer_id_str = str(order.customer_id) if order.customer_id else None
+                
+                # Validate that we have a valid order ID
+                if not order_id_str or order_id_str == 'None':
+                    print(f"[ADMIN ORDERS] Skipping order with invalid ID. Order doc _id: {order_doc.get('_id')}, order.id: {order.id}")
+                    continue
+                
+                orders_data.append({
+                    'id': order_id_str,
+                    'order_number': order.order_number or f'ORD-{order_id_str[:8]}',
+                    'customer_id': customer_id_str,
+                    'customer_name': customer.name if customer else 'Unknown Customer',
+                    'customer_email': customer.email if customer else '',
+                    'customer_phone': customer.phone if customer else '',
+                    'order_date': order.order_date.isoformat() if order.order_date else '',
+                    'status': order.status or 'pending',
+                    'total_amount': float(order.total_amount) if order.total_amount else 0,
+                    'notes': order.notes or '',
+                    'items': items_data,
+                    'created_at': order.created_at.isoformat() if order.created_at else ''
                 })
-            
-            orders_data.append({
-                'id': order.id,
-                'order_number': order.order_number,
-                'customer_id': order.customer_id,
-                'customer_name': customer.name if customer else 'Unknown Customer',
-                'customer_email': customer.email if customer else '',
-                'customer_phone': customer.phone if customer else '',
-                'order_date': order.order_date.isoformat() if order.order_date else '',
-                'status': order.status,
-                'total_amount': float(order.total_amount),
-                'notes': order.notes,
-                'items': items_data,
-                'created_at': order.created_at.isoformat()
-            })
+            except Exception as order_error:
+                print(f"[ADMIN ORDERS] Error processing order: {order_error}")
+                import traceback
+                traceback.print_exc()
+                continue
         
         return jsonify({'success': True, 'orders': orders_data})
     
@@ -404,7 +553,7 @@ def get_orders():
         print(f"Error getting orders: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@admin_bp.route('/orders/<int:order_id>/status', methods=['PUT'])
+@admin_bp.route('/orders/<order_id>/status', methods=['PUT'])
 @login_required
 def update_order_status(order_id):
     """Update order status"""
@@ -415,36 +564,102 @@ def update_order_status(order_id):
         if not new_status:
             return jsonify({'success': False, 'error': 'Status is required'}), 400
         
-        # Get order - admins can update any order
-        order = Order.find_by_id(order_id)
+        # Convert order_id to string (MongoDB uses string ObjectIds)
+        order_id_str = str(order_id)
+        print(f"[UPDATE ORDER STATUS] Updating order {order_id_str} to status: {new_status}")
         
-        if not order:
-            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Try to find order directly from database
+        try:
+            order_id_obj = ObjectId(order_id_str) if ObjectId.is_valid(order_id_str) else order_id_str
+            order_doc = database['orders'].find_one({'_id': order_id_obj})
+            
+            if not order_doc:
+                print(f"[UPDATE ORDER STATUS] Order not found in database: {order_id_str}")
+                return jsonify({'success': False, 'error': 'Order not found'}), 404
+            
+            order = Order.from_dict(order_doc)
+            if not order:
+                print(f"[UPDATE ORDER STATUS] Failed to parse order document: {order_id_str}")
+                return jsonify({'success': False, 'error': 'Order not found'}), 404
+        except Exception as find_error:
+            print(f"[UPDATE ORDER STATUS] Error finding order: {find_error}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Error finding order: {str(find_error)}'}), 500
         
         order.status = new_status
+        order.updated_at = datetime.utcnow()
         order.save()
         
+        print(f"[UPDATE ORDER STATUS] Order {order_id_str} status updated to {new_status}")
         return jsonify({'success': True, 'message': 'Order status updated successfully'})
     
     except Exception as e:
         print(f"Error updating order status: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@admin_bp.route('/orders/<int:order_id>/generate-invoice', methods=['POST'])
+@admin_bp.route('/orders/<order_id>/generate-invoice', methods=['POST'])
 @login_required
 def generate_invoice_from_order(order_id):
     """Generate an invoice from an order"""
     try:
-        # Get order - admins can generate invoices for any order
-        order = Order.find_by_id(order_id)
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
         
-        if not order:
-            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        # Convert order_id to string (MongoDB uses string ObjectIds)
+        order_id_str = str(order_id)
+        print(f"[GENERATE INVOICE] Generating invoice for order: {order_id_str}")
+        
+        # Try to find order directly from database
+        try:
+            order_id_obj = ObjectId(order_id_str) if ObjectId.is_valid(order_id_str) else order_id_str
+            order_doc = database['orders'].find_one({'_id': order_id_obj})
+            
+            if not order_doc:
+                print(f"[GENERATE INVOICE] Order not found in database: {order_id_str}")
+                return jsonify({'success': False, 'error': 'Order not found'}), 404
+            
+            order = Order.from_dict(order_doc)
+            if not order:
+                print(f"[GENERATE INVOICE] Failed to parse order document: {order_id_str}")
+                return jsonify({'success': False, 'error': 'Order not found'}), 404
+        except Exception as find_error:
+            print(f"[GENERATE INVOICE] Error finding order: {find_error}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Error finding order: {str(find_error)}'}), 500
         
         # Check if invoice already exists for this order
-        existing_invoice_doc = db['invoices'].find_one({'order_id': ObjectId(order_id) if isinstance(order_id, str) else order_id})
+        order_id_obj = ObjectId(order_id_str) if ObjectId.is_valid(order_id_str) else order_id_str
+        existing_invoice_doc = database['invoices'].find_one({'order_id': order_id_obj})
         if existing_invoice_doc:
+            existing_invoice = Invoice.from_dict(existing_invoice_doc)
+            if existing_invoice:
+                return jsonify({
+                    'success': True,
+                    'message': 'Invoice already exists for this order',
+                    'invoice': {
+                        'id': str(existing_invoice.id),
+                        'invoice_number': existing_invoice.invoice_number
+                    }
+                })
             return jsonify({'success': False, 'error': 'Invoice already exists for this order'}), 400
+        
+        # Get customer details to verify it exists
+        customer = Customer.find_by_id(str(order.customer_id))
+        if not customer:
+            return jsonify({'success': False, 'error': 'Customer not found for this order'}), 404
         
         # Generate invoice number
         invoice_number = f"INV-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
@@ -452,7 +667,7 @@ def generate_invoice_from_order(order_id):
         # Create invoice
         invoice = Invoice(
             user_id=current_user.id,
-            customer_id=order.customer_id,
+            customer_id=str(order.customer_id),
             invoice_number=invoice_number,
             invoice_date=datetime.now().date(),
             due_date=(datetime.now() + timedelta(days=30)).date(),  # 30 days from now
@@ -460,13 +675,14 @@ def generate_invoice_from_order(order_id):
             total_amount=order.total_amount,
             status='pending',
             notes=f"Invoice generated from order {order.order_number}",
-            order_id=order_id  # Link to the original order
+            order_id=str(order.id)  # Link to the original order
         )
         invoice.save()
+        print(f"[GENERATE INVOICE] Invoice saved. ID: {invoice.id}")
         
         # Add invoice items from order items
-        order_items = [OrderItem.from_dict(doc) for doc in db['order_items'].find(
-            {'order_id': ObjectId(order_id) if isinstance(order_id, str) else order_id}
+        order_items = [OrderItem.from_dict(doc) for doc in database['order_items'].find(
+            {'order_id': order_id_obj}
         )]
         invoice_items_list = []
         for order_item in order_items:
@@ -492,11 +708,12 @@ def generate_invoice_from_order(order_id):
         invoice.calculate_totals()
         invoice.save()
         
+        print(f"[GENERATE INVOICE] Invoice created successfully. Invoice ID: {invoice.id}, Invoice Number: {invoice.invoice_number}")
         return jsonify({
             'success': True,
             'message': 'Invoice generated successfully',
             'invoice': {
-                'id': invoice.id,
+                'id': str(invoice.id),
                 'invoice_number': invoice.invoice_number,
                 'total_amount': float(invoice.total_amount)
             }

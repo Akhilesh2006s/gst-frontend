@@ -12,9 +12,9 @@ interface OrderItem {
 }
 
 interface Order {
-  id: number;
+  id: number | string;
   order_number: string;
-  customer_id: number;
+  customer_id: number | string;
   customer_name: string;
   customer_email: string;
   customer_phone: string;
@@ -52,18 +52,46 @@ const Orders: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        setOrders(data.orders || []);
+        if (data.success) {
+          // Ensure all orders have valid IDs
+          const validOrders = (data.orders || []).filter((order: Order) => {
+            if (!order.id) {
+              console.warn('Order missing ID:', order);
+              return false;
+            }
+            return true;
+          }).map((order: Order) => ({
+            ...order,
+            id: order.id || String(order.order_number) // Fallback to order_number if id is missing
+          }));
+          setOrders(validOrders);
+          console.log(`Loaded ${validOrders.length} orders`);
+        } else {
+          console.error('Failed to load orders:', data.error || 'Unknown error');
+          setOrders([]);
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Failed to load orders:', errorData.error || response.statusText);
+        setOrders([]);
       }
     } catch (error: any) {
       console.error('Failed to load orders:', error);
+      setOrders([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const updateOrderStatus = async (orderId: number, status: string) => {
+  const updateOrderStatus = async (orderId: number | string, status: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/orders/${orderId}/status`, {
+      if (!orderId || orderId === 'None' || orderId === 'null' || orderId === 'undefined') {
+        alert('Invalid order ID. Please refresh the page and try again.');
+        console.error('Invalid order ID:', orderId);
+        return;
+      }
+      const orderIdStr = String(orderId);
+      const response = await fetch(`${API_BASE_URL}/admin/orders/${orderIdStr}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -73,16 +101,31 @@ const Orders: React.FC = () => {
       });
 
       if (response.ok) {
-        await loadOrders();
+        const data = await response.json();
+        if (data.success) {
+          await loadOrders();
+        } else {
+          alert(`Failed to update status: ${data.error || 'Unknown error'}`);
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        alert(`Failed to update status: ${errorData.error || 'Unknown error'}`);
       }
     } catch (error: any) {
       console.error('Failed to update order status:', error);
+      alert('Failed to update order status. Please try again.');
     }
   };
 
-  const generateInvoice = async (orderId: number) => {
+  const generateInvoice = async (orderId: number | string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/orders/${orderId}/generate-invoice`, {
+      if (!orderId || orderId === 'None' || orderId === 'null' || orderId === 'undefined') {
+        alert('Invalid order ID. Please refresh the page and try again.');
+        console.error('Invalid order ID:', orderId);
+        return;
+      }
+      const orderIdStr = String(orderId);
+      const response = await fetch(`${API_BASE_URL}/admin/orders/${orderIdStr}/generate-invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,11 +134,16 @@ const Orders: React.FC = () => {
       });
 
       if (response.ok) {
-        await response.json();
-        alert('Invoice generated successfully!');
-        loadOrders(); // Reload orders to show updated status
+        const data = await response.json();
+        if (data.success && data.invoice) {
+          // Redirect to the invoice detail page
+          navigate(`/invoices/${data.invoice.id}`);
+        } else {
+          alert('Invoice generated successfully!');
+          loadOrders(); // Reload orders to show updated status
+        }
       } else {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         alert(`Failed to generate invoice: ${errorData.error || 'Unknown error'}`);
       }
     } catch (error) {

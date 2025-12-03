@@ -14,7 +14,7 @@ customer_auth_bp = Blueprint('customer_auth', __name__)
 
 @customer_auth_bp.route('/register', methods=['POST'])
 def register():
-    """Customer registration"""
+    """Customer registration - automatically links to first available admin"""
     try:
         data = request.get_json()
         
@@ -22,36 +22,48 @@ def register():
         if Customer.find_by_email(data['email']):
             return jsonify({'success': False, 'message': 'Email already registered'}), 400
         
-        # Get first admin user as default (or handle differently)
-        if db is None:
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
             return jsonify({'success': False, 'message': 'Database not initialized'}), 500
         
-        admin_users = [User.from_dict(doc) for doc in db['users'].find().limit(1)]
-        default_user_id = admin_users[0].id if admin_users else None
+        # Get first admin user as default (customers register independently and are linked to first admin)
+        # In a multi-admin system, you might want to allow customers to choose or assign them later
+        admin_users_docs = list(database['users'].find().limit(1))
+        default_user_id = None
+        
+        if admin_users_docs:
+            admin_user = User.from_dict(admin_users_docs[0])
+            if admin_user:
+                default_user_id = admin_user.id
         
         if not default_user_id:
             return jsonify({'success': False, 'message': 'No admin user found. Please create an admin user first.'}), 500
         
-        # Create new customer
+        # Create new customer - automatically linked to admin so they can see all products
         customer = Customer(
             user_id=default_user_id,
             name=data['name'],
             email=data['email'],
-            phone=data['phone'],
+            phone=data.get('phone', ''),
             gstin=data.get('gstin'),
-            billing_address=data['billing_address'],
+            billing_address=data.get('billing_address'),
             shipping_address=data.get('shipping_address'),
-            state=data['state'],
-            pincode=data['pincode']
+            state=data.get('state'),
+            pincode=data.get('pincode')
         )
         customer.set_password(data['password'])
         customer.save()
+        
+        # Ensure ID is a string (convert ObjectId if needed)
+        customer_id = str(customer.id) if customer.id else None
         
         return jsonify({
             'success': True,
             'message': 'Registration successful! Please login.',
             'customer': {
-                'id': customer.id,
+                'id': customer_id,
                 'name': customer.name,
                 'email': customer.email
             }
@@ -78,12 +90,17 @@ def login():
         if customer and customer.check_password(data['password']):
             login_user(customer, remember=data.get('remember_me', False))
             session.permanent = True
+            # Force session to be saved immediately
+            session.modified = True
+            
+            # Ensure ID is a string (convert ObjectId if needed)
+            customer_id = str(customer.id) if customer.id else None
             
             return jsonify({
                 'success': True,
                 'message': 'Login successful!',
                 'customer': {
-                    'id': customer.id,
+                    'id': customer_id,
                     'name': customer.name,
                     'email': customer.email
                 }
@@ -168,23 +185,42 @@ def reset_password():
         return jsonify({'success': False, 'message': f'Registration error: {error_msg}'}), 500
 
 @customer_auth_bp.route('/profile')
-@login_required
 def profile():
-    """Get customer profile"""
-    return jsonify({
-        'success': True,
-        'customer': {
-            'id': current_user.id,
-            'name': current_user.name,
-            'email': current_user.email,
-            'phone': current_user.phone,
-            'gstin': current_user.gstin,
-            'billing_address': current_user.billing_address,
-            'shipping_address': current_user.shipping_address,
-            'state': current_user.state,
-            'pincode': current_user.pincode
-        }
-    })
+    """Get customer profile - also used for session verification"""
+    try:
+        if current_user.is_authenticated:
+            # Ensure ID is a string (convert ObjectId if needed)
+            customer_id = str(current_user.id) if hasattr(current_user, 'id') and current_user.id else None
+            
+            return jsonify({
+                'success': True,
+                'authenticated': True,
+                'customer': {
+                    'id': customer_id,
+                    'name': current_user.name,
+                    'email': current_user.email,
+                    'phone': current_user.phone,
+                    'gstin': current_user.gstin,
+                    'billing_address': current_user.billing_address,
+                    'shipping_address': current_user.shipping_address,
+                    'state': current_user.state,
+                    'pincode': current_user.pincode
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'authenticated': False,
+                'message': 'Not authenticated'
+            }), 401
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'authenticated': False,
+            'error': str(e)
+        }), 500
 
 @customer_auth_bp.route('/products', methods=['GET'])
 @login_required
@@ -203,38 +239,164 @@ def get_customer_products():
             return jsonify({'success': False, 'error': 'Customer not found'}), 404
         
         admin_user_id = customer.user_id
+        print(f"[CUSTOMER PRODUCTS] Customer ID: {customer_id}, Admin User ID: {admin_user_id}")
         
-        # Query products for this admin
-        query = {
-            'user_id': ObjectId(admin_user_id) if isinstance(admin_user_id, str) else admin_user_id,
-            'is_active': True
-        }
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Build query - if customer has admin_user_id, filter by it; otherwise show all products
+        if admin_user_id:
+            # Convert admin_user_id to ObjectId if it's a string
+            try:
+                if isinstance(admin_user_id, str):
+                    admin_user_id_obj = ObjectId(admin_user_id) if ObjectId.is_valid(admin_user_id) else None
+                else:
+                    admin_user_id_obj = admin_user_id
+            except Exception as e:
+                print(f"[CUSTOMER PRODUCTS] Error converting user_id to ObjectId: {e}")
+                admin_user_id_obj = admin_user_id
+            
+            if admin_user_id_obj:
+                # Query products for this specific admin
+                query = {
+                    'user_id': admin_user_id_obj,
+                    '$or': [
+                        {'is_active': True},
+                        {'is_active': {'$exists': False}},
+                        {'is_active': None}
+                    ]
+                }
+            else:
+                # Invalid admin_user_id, show all products
+                print(f"[CUSTOMER PRODUCTS] Invalid admin_user_id, showing all products")
+                query = {
+                    '$or': [
+                        {'is_active': True},
+                        {'is_active': {'$exists': False}},
+                        {'is_active': None}
+                    ]
+                }
+        else:
+            # Customer not linked to admin, show ALL products from ALL admins
+            print(f"[CUSTOMER PRODUCTS] Customer not linked to admin, showing all products")
+            query = {
+                '$or': [
+                    {'is_active': True},
+                    {'is_active': {'$exists': False}},
+                    {'is_active': None}
+                ]
+            }
         
         # Apply search filter if provided
         if search:
-            query['$or'] = [
-                {'name': {'$regex': search, '$options': 'i'}},
-                {'sku': {'$regex': search, '$options': 'i'}},
-                {'description': {'$regex': search, '$options': 'i'}}
-            ]
+            search_query = {
+                '$or': [
+                    {'name': {'$regex': search, '$options': 'i'}},
+                    {'sku': {'$regex': search, '$options': 'i'}},
+                    {'description': {'$regex': search, '$options': 'i'}}
+                ]
+            }
+            # Combine with existing query
+            if 'user_id' in query:
+                # Query has user_id filter
+                query = {
+                    '$and': [
+                        {
+                            'user_id': query['user_id'],
+                            '$or': query['$or']
+                        },
+                        search_query
+                    ]
+                }
+            else:
+                # Query doesn't have user_id, just add search
+                query = {
+                    '$and': [
+                        {
+                            '$or': query['$or']
+                        },
+                        search_query
+                    ]
+                }
         
-        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
+        print(f"[CUSTOMER PRODUCTS] Query: {query}")
+        
+        # Get all products from inventory (including those with 0 stock)
+        products_docs = list(database['products'].find(query).sort('name', 1))
+        print(f"[CUSTOMER PRODUCTS] Found {len(products_docs)} products with query")
+        
+        # If no products found and we filtered by user_id, try showing all products
+        if len(products_docs) == 0 and admin_user_id:
+            print(f"[CUSTOMER PRODUCTS] No products found for admin, trying all products")
+            fallback_query = {
+                '$or': [
+                    {'is_active': True},
+                    {'is_active': {'$exists': False}},
+                    {'is_active': None}
+                ]
+            }
+            if search:
+                fallback_query = {
+                    '$and': [
+                        {
+                            '$or': [
+                                {'is_active': True},
+                                {'is_active': {'$exists': False}},
+                                {'is_active': None}
+                            ]
+                        },
+                        {
+                            '$or': [
+                                {'name': {'$regex': search, '$options': 'i'}},
+                                {'sku': {'$regex': search, '$options': 'i'}},
+                                {'description': {'$regex': search, '$options': 'i'}}
+                            ]
+                        }
+                    ]
+                }
+            products_docs = list(database['products'].find(fallback_query).sort('name', 1))
+            print(f"[CUSTOMER PRODUCTS] Found {len(products_docs)} products with fallback query")
+        
+        products = []
+        for doc in products_docs:
+            if not isinstance(doc, dict):
+                continue
+            try:
+                product = Product.from_dict(doc)
+                if product:
+                    products.append(product)
+            except Exception as parse_error:
+                print(f"[CUSTOMER PRODUCTS] Error parsing product document: {parse_error}")
+                continue
         
         # Return products with customer-specific prices
         products_data = []
         for product in products:
             try:
+                # Ensure product ID is a string
+                product_id = str(product.id) if product.id else None
+                if not product_id:
+                    print(f"[CUSTOMER PRODUCTS] Skipping product with no ID: {product.name}")
+                    continue
+                
                 # Get customer-specific price if available
-                customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id, product.id)
+                customer_price = None
+                try:
+                    customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id, product_id)
+                except Exception as price_error:
+                    print(f"[CUSTOMER PRODUCTS] Error getting customer price for product {product_id}: {price_error}")
                 
                 # Use customer-specific price if available, otherwise use default price
-                price = float(customer_price.price) if customer_price else float(product.price or 0)
+                price = float(customer_price.price) if customer_price and customer_price.price else float(product.price or 0)
                 has_custom_price = customer_price is not None
                 default_price = float(product.price or 0)
                 
                 products_data.append({
-                    'id': product.id,
-                    'name': product.name,
+                    'id': product_id,
+                    'name': product.name or 'Unnamed Product',
                     'description': product.description or '',
                     'image_url': product.image_url or '',
                     'price': price,
@@ -245,12 +407,17 @@ def get_customer_products():
                     'category': product.category or ''
                 })
             except Exception as product_error:
-                print(f"Error processing product {product.id}: {str(product_error)}")
+                import traceback
+                print(f"[CUSTOMER PRODUCTS] Error processing product {getattr(product, 'id', 'unknown')}: {str(product_error)}")
+                traceback.print_exc()
                 continue
+        
+        print(f"[CUSTOMER PRODUCTS] Returning {len(products_data)} products to customer")
         
         return jsonify({
             'success': True,
-            'products': products_data
+            'products': products_data,
+            'count': len(products_data)
         })
     
     except Exception as e:
@@ -341,16 +508,21 @@ def create_customer_order():
         # Generate order number
         order_number = f"ORD-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
         
+        # Ensure customer_id is a string (MongoDB will convert to ObjectId in to_dict)
+        customer_id_str = str(customer_id)
+        print(f"[CREATE ORDER] Creating order for customer_id: {customer_id_str} (type: {type(customer_id_str)})")
+        
         # Create order
         order = Order(
             order_number=order_number,
-            customer_id=customer_id,
+            customer_id=customer_id_str,
             order_date=datetime.now(),
             status='pending',
             total_amount=data.get('total_amount', 0),
             notes=data.get('notes', '')
         )
         order.save()
+        print(f"[CREATE ORDER] Order saved successfully. Order ID: {order.id}, Order Number: {order.order_number}")
         
         # Add order items
         items = data.get('items', [])

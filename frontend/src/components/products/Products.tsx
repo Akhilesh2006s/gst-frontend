@@ -172,29 +172,50 @@ const Products: React.FC = () => {
   };
 
   const handleSetPrice = (product: Product) => {
+    if (!selectedCustomer) {
+      alert('Please select a customer first before setting product prices.');
+      return;
+    }
     setSelectedProduct(product);
-    setCustomPrice(product.price);
+    setCustomPrice(product.price || product.default_price || 0);
     setShowPriceModal(true);
   };
 
   const handleSavePrice = async () => {
-    if (!selectedProduct || !selectedCustomer) return;
+    if (!selectedProduct || !selectedCustomer) {
+      alert('Please select both a customer and a product.');
+      return;
+    }
+
+    // Validate price
+    if (!customPrice || customPrice <= 0) {
+      alert('Please enter a valid price greater than 0.');
+      return;
+    }
 
     try {
       setPriceLoading(true);
       
-      // Ensure IDs are numbers, not strings
+      // Convert IDs to strings (MongoDB uses string ObjectIds)
+      const customerId = String(selectedCustomer.id);
+      const productId = String(selectedProduct.id);
+      const price = parseFloat(String(customPrice));
+      
+      if (!customerId || !productId || isNaN(price) || price <= 0) {
+        alert('Invalid customer ID, product ID, or price. Please try again.');
+        setPriceLoading(false);
+        return;
+      }
+      
       const requestData = {
-        customer_id: Number(selectedCustomer.id),
-        product_id: Number(selectedProduct.id),
-        price: Number(customPrice)
+        customer_id: customerId,
+        product_id: productId,
+        price: price
       };
       
       console.log('[DEBUG] Saving customer price:', requestData);
       console.log('[DEBUG] Selected customer:', selectedCustomer);
-      console.log('[DEBUG] Selected customer ID type:', typeof selectedCustomer.id, 'value:', selectedCustomer.id);
       console.log('[DEBUG] Selected product:', selectedProduct);
-      console.log('[DEBUG] Converted customer_id:', requestData.customer_id, 'type:', typeof requestData.customer_id);
       
       const response = await fetch(`${API_BASE_URL}/products/customer-prices`, {
         method: 'POST',
@@ -709,20 +730,6 @@ const Products: React.FC = () => {
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                 </svg>
                                 <span>Edit</span>
-                              </button>
-                              <button
-                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded text-xs font-medium flex items-center space-x-1"
-                                title="Share"
-                              >
-                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                                </svg>
-                                <span>Share</span>
-                              </button>
-                              <button className="p-1.5 text-gray-400 hover:text-gray-600">
-                                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-                                </svg>
                               </button>
                             </div>
                           </td>

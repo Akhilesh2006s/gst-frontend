@@ -36,6 +36,7 @@ const Inventory: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
@@ -57,25 +58,60 @@ const Inventory: React.FC = () => {
   } | null>(null);
 
   useEffect(() => {
-    const checkAuth = () => {
-      const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-      const userType = localStorage.getItem('userType');
-      
-      if (!isAuthenticated || userType !== 'admin') {
+    const verifyAuthAndLoadInventory = async () => {
+      try {
+        // Check authentication with backend
+        const authCheck = await fetch(`${API_BASE_URL}/auth/check`, {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const authData = await authCheck.json().catch(() => ({ authenticated: false }));
+        
+        // Check if user is authenticated and is admin
+        // The endpoint returns user_type: 'admin' for admin users
+        if (!authCheck.ok || !authData.authenticated) {
+          console.warn('User not authenticated, redirecting to login');
         navigate('/login');
-        return false;
+          return;
+        }
+        
+        // Only allow admin or super_admin to access inventory
+        // If user_type is not explicitly 'admin' or 'super_admin', redirect
+        const userType = authData.user_type;
+        if (userType !== 'admin' && userType !== 'super_admin') {
+          console.warn(`User type '${userType}' is not authorized for inventory access, redirecting to login`);
+          navigate('/login');
+          return;
       }
-      return true;
+        
+        // User is authenticated as admin, load inventory
+        await loadInventory();
+      } catch (error) {
+        console.error('Auth verification failed:', error);
+        setError('Failed to verify authentication. Please try again.');
+        setLoading(false);
+      }
     };
 
-    if (checkAuth()) {
+    verifyAuthAndLoadInventory();
+  }, [navigate]);
+
+  // Separate effect for search and category changes
+  useEffect(() => {
+    // Only reload if we're not in initial loading state
+    if (!loading && inventory.length >= 0) {
       loadInventory();
     }
-  }, [navigate, searchTerm, selectedCategory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, selectedCategory]);
 
   const loadInventory = async () => {
     try {
       setLoading(true);
+      setError(null);
       const params = new URLSearchParams();
       if (searchTerm) params.append('search', searchTerm);
       if (selectedCategory && selectedCategory !== 'All') params.append('category', selectedCategory);
@@ -92,12 +128,37 @@ const Inventory: React.FC = () => {
         if (data.success) {
           setInventory(data.inventory || []);
           setSummary(data.summary || null);
+          setError(null);
+        } else {
+          const errorMsg = data.error || 'Unknown error';
+          console.error('Failed to load inventory:', errorMsg);
+          setError(errorMsg);
+          // Set empty inventory if error
+          setInventory([]);
+          setSummary(null);
         }
       } else {
-        console.error('Failed to load inventory');
+        // Try to get error message from response
+        let errorMessage = 'Failed to load inventory';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          errorMessage = `Server error: ${response.status} ${response.statusText}`;
+        }
+        console.error('Failed to load inventory:', errorMessage);
+        setError(errorMessage);
+        // Set empty inventory on error
+        setInventory([]);
+        setSummary(null);
       }
-    } catch (error) {
+    } catch (error: any) {
+      const errorMsg = error?.message || 'Failed to load inventory. Please check your connection.';
       console.error('Failed to load inventory:', error);
+      setError(errorMsg);
+      // Set empty inventory on error
+      setInventory([]);
+      setSummary(null);
     } finally {
       setLoading(false);
     }
@@ -156,7 +217,7 @@ const Inventory: React.FC = () => {
     }
   };
 
-  const handleStockMovement = async (productId: number, type: 'in' | 'out', quantity: number) => {
+  const handleStockMovement = async (productId: number | string, type: 'in' | 'out', quantity: number) => {
     try {
       const response = await fetch(`${API_BASE_URL}/products/${productId}/stock`, {
         method: 'POST',
@@ -172,6 +233,23 @@ const Inventory: React.FC = () => {
         })
       });
       
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        // Try to get error message from response
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch (e) {
+          // If response is not JSON (likely HTML error page), read as text
+          const text = await response.text();
+          console.error('Non-JSON response:', text.substring(0, 200));
+          errorMessage = `Server error: ${response.status}. Please check if the product ID is valid.`;
+        }
+        alert(`Failed to update stock: ${errorMessage}`);
+        return;
+      }
+      
       const data = await response.json();
       if (data.success) {
         loadInventory();
@@ -183,7 +261,12 @@ const Inventory: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Error updating stock:', error);
-      alert(`Error updating stock: ${error.message}`);
+      // Check if error is JSON parse error
+      if (error.message && error.message.includes('JSON')) {
+        alert(`Error updating stock: Server returned invalid response. Please check if the product ID is correct.`);
+      } else {
+        alert(`Error updating stock: ${error.message || 'Network error'}`);
+      }
     }
   };
 
@@ -290,6 +373,33 @@ const Inventory: React.FC = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600 text-lg">Loading inventory...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 text-red-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <h3 className="text-lg font-medium text-red-800">Error Loading Inventory</h3>
+            </div>
+            <p className="mt-2 text-sm text-red-700">{error}</p>
+            <button
+              onClick={() => loadInventory()}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );

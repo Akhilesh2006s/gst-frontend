@@ -82,10 +82,6 @@ def create_app(config_name='development'):
     def handle_cors_preflight():
         if request.method == 'OPTIONS':
             response = make_response('', 200)
-            response.headers.add("Access-Control-Allow-Origin", request.headers.get('Origin', '*'))
-            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,Origin,Accept,X-Requested-With")
-            response.headers.add('Access-Control-Allow-Methods', "GET,POST,PUT,DELETE,OPTIONS")
-            response.headers.add('Access-Control-Allow-Credentials', "true")
             return response
 
     # Health check endpoint - register early before catch-all routes

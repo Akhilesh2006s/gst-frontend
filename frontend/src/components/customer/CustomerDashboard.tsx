@@ -52,6 +52,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [invoices, setInvoices] = useState<CustomerInvoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showCart, setShowCart] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -63,11 +64,11 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   const [stockUpdateAnimation, setStockUpdateAnimation] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    loadProducts();
-    // Auto-refresh products every 5 seconds to get latest stock
+    loadProducts(true); // Initial load
+    // Auto-refresh products every 5 minutes to get latest products and stock from admin
     const interval = setInterval(() => {
-      loadProducts();
-    }, 5000);
+      loadProducts(false); // Background refresh - don't show loading
+    }, 300000); // 5 minutes = 300000 milliseconds
     return () => clearInterval(interval);
   }, [searchTerm]);
 
@@ -101,9 +102,11 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
     });
   }, [products]);
 
-  const loadProducts = async () => {
+  const loadProducts = async (showLoading: boolean = true) => {
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       // Build URL with search parameter if provided
       let url = `${API_BASE_URL}/customer-auth/products`;
       if (searchTerm) {
@@ -127,17 +130,31 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
         if (data.success) {
           setProducts(data.products || []);
           console.log('[DEBUG] Products set in state:', data.products || []);
+          if (initialLoad) {
+            setInitialLoad(false);
+          }
         } else {
           console.error('[ERROR] API returned success=false:', data.error || data.message);
+          if (showLoading) {
+            setLoading(false);
+          }
         }
       } else {
         const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         console.error('[ERROR] Failed to load products:', response.status, response.statusText, errorData);
+        if (showLoading) {
+          setLoading(false);
+        }
       }
     } catch (error: any) {
       console.error('[ERROR] Exception loading products:', error);
+      if (showLoading) {
+        setLoading(false);
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   };
 
@@ -354,7 +371,11 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
       }
     } catch (error: any) {
       console.error('Failed to submit order:', error);
-      alert(`Failed to submit order: ${error.message || 'Network error. Please check your connection and try again.'}`);
+      if (error.message && error.message.includes('Failed to fetch')) {
+        alert('Failed to submit order: Cannot connect to server. Please ensure the backend server is running on http://localhost:5000');
+      } else {
+        alert(`Failed to submit order: ${error.message || 'Network error. Please check your connection and try again.'}`);
+      }
     }
   };
 
@@ -377,7 +398,8 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
   // Products are now filtered on the server side
   const filteredProducts = products;
 
-  if (loading) {
+  // Only show loading screen on initial load, not during background refreshes
+  if (loading && initialLoad) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">

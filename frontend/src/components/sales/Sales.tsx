@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import API_BASE_URL from '../../config/api';
 
 interface Invoice {
-  id: number;
+  id: number | string;
   invoice_number: string;
-  customer_id: number;
+  customer_id: number | string;
   customer_name: string;
   customer_email: string;
   customer_phone: string;
@@ -19,7 +19,7 @@ interface Invoice {
   total_amount: number;
   notes: string;
   items: any[];
-  order_id?: number;
+  order_id?: number | string;
   created_at: string;
   created_by?: string;
 }
@@ -67,28 +67,38 @@ const Sales: React.FC = () => {
   });
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
   const [productSearch, setProductSearch] = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(false);
   const [creatingSale, setCreatingSale] = useState(false);
 
   const getDateRange = () => {
+    if (dateFilter === 'all') {
+      return null;
+    }
+    
     const now = new Date();
     
     switch (dateFilter) {
       case 'this_month':
+        // Include today and all of this month - be more inclusive
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        // End date should be end of current month, or today if we're in the current month
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        // Always use end of month to include all invoices created this month
         return {
-          start: new Date(now.getFullYear(), now.getMonth(), 1),
-          end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
+          start: startOfMonth,
+          end: endOfMonth
         };
       case 'last_month':
         return {
-          start: new Date(now.getFullYear(), now.getMonth() - 1, 1),
-          end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
+          start: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+          end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
         };
       case 'this_year':
         return {
-          start: new Date(now.getFullYear(), 0, 1),
-          end: new Date(now.getFullYear(), 11, 31, 23, 59, 59)
+          start: new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0),
+          end: new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999)
         };
-      case 'all':
       default:
         return null;
     }
@@ -101,7 +111,17 @@ const Sales: React.FC = () => {
   useEffect(() => {
     if (showCreateSaleModal) {
       fetchCustomers();
+      // Always fetch products when modal opens, even if we have some cached
+      setProducts([]); // Clear existing products to show loading state
       fetchProducts();
+      // Reset form when modal opens
+      setProductSearch('');
+      setShowProductDropdown(false);
+    } else {
+      // Reset when modal closes
+      setProductSearch('');
+      setShowProductDropdown(false);
+      setProductsLoading(false);
     }
   }, [showCreateSaleModal]);
 
@@ -121,28 +141,105 @@ const Sales: React.FC = () => {
 
   const fetchProducts = async () => {
     try {
+      setProductsLoading(true);
+      console.log('Fetching products for sales from:', `${API_BASE_URL}/products/`);
       const response = await fetch(`${API_BASE_URL}/products/`, {
-        credentials: 'include'
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setProducts(data.products || []);
+      console.log('Products response status:', response.status);
+      const responseText = await response.text();
+      console.log('Products response text (first 500 chars):', responseText.substring(0, 500));
+      
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse JSON response:', parseError);
+        console.error('Response text:', responseText);
+        alert(`Server returned invalid JSON. Check console for details.`);
+        setProducts([]);
+        setProductsLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Failed to load products:', error);
+      
+      console.log('Products response data:', data);
+      if (response.ok) {
+        if (data.success) {
+          const productsList = data.products || [];
+          console.log(`Loaded ${productsList.length} products for sales`);
+          if (productsList.length === 0) {
+            console.warn('API returned success but no products in array');
+            console.warn('Full response:', data);
+          }
+          setProducts(productsList);
+        } else {
+          console.error('API returned success=false:', data.error || 'Unknown error');
+          alert(`Failed to load products: ${data.error || 'Unknown error'}`);
+          setProducts([]);
+        }
+      } else {
+        console.error('HTTP error response:', response.status, data);
+        alert(`Failed to load products: ${data.error || response.statusText}`);
+        setProducts([]);
+      }
+    } catch (error: any) {
+      console.error('Failed to load products for sales:', error);
+      alert(`Error loading products: ${error.message || 'Network error'}`);
+      setProducts([]);
+    } finally {
+      setProductsLoading(false);
     }
   };
 
   const fetchSalesData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/invoices`, {
-        credentials: 'include'
+      const response = await fetch(`${API_BASE_URL}/invoices/`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
       
       if (response.ok) {
         const data = await response.json();
-        const invoicesData = data.invoices || [];
+        console.log('Fetched invoices response:', data);
+        const invoicesData = (data.invoices || []).map((inv: any) => {
+          // Ensure ID is always set and is a string
+          // Try multiple possible ID fields
+          const invoiceId = inv.id || inv._id || inv.invoice_id || null;
+          
+          if (!invoiceId) {
+            console.warn('Invoice missing ID:', inv);
+            console.warn('Available fields:', Object.keys(inv));
+          }
+          
+          // Ensure created_at is set (use invoice_date as fallback)
+          const createdAt = inv.created_at || inv.invoice_date || new Date().toISOString();
+          
+          return {
+            ...inv,
+            id: invoiceId ? String(invoiceId) : null,
+            created_at: createdAt
+          };
+        }).filter((inv: any) => inv.id); // Filter out invoices without IDs
+        
+        console.log('Loaded invoices:', invoicesData.length);
+        if (invoicesData.length > 0) {
+          console.log('Sample invoice:', invoicesData[0]);
+          console.log('All invoices:', invoicesData.map((inv: any) => ({ 
+            number: inv.invoice_number, 
+            created_at: inv.created_at,
+            invoice_date: inv.invoice_date,
+            status: inv.status,
+            id: inv.id
+          })));
+        } else {
+          console.warn('No invoices loaded! Check backend logs.');
+        }
         setInvoices(invoicesData);
         
         // Calculate summary based on date filter
@@ -262,20 +359,40 @@ const Sales: React.FC = () => {
     // Filter by tab
     if (activeTab === 'all') {
       // Show all except drafts
-      if (invoice.status.toLowerCase() === 'draft') return false;
+      if (invoice.status && invoice.status.toLowerCase() === 'draft') return false;
     } else if (activeTab === 'drafts') {
-      if (invoice.status.toLowerCase() !== 'draft') return false;
+      if (!invoice.status || invoice.status.toLowerCase() !== 'draft') return false;
     } else if (activeTab === 'done') {
-      if (invoice.status.toLowerCase() !== 'done') return false;
+      if (!invoice.status || invoice.status.toLowerCase() !== 'done') return false;
     } else {
-      if (invoice.status.toLowerCase() !== activeTab) return false;
+      if (!invoice.status || invoice.status.toLowerCase() !== activeTab) return false;
     }
     
     // Filter by date range
     const dateRange = getDateRange();
     if (dateRange) {
-      const invoiceDate = new Date(invoice.created_at);
+      // Use created_at if available, otherwise use invoice_date
+      const invoiceDateStr = invoice.created_at || invoice.invoice_date;
+      if (!invoiceDateStr) {
+        // If no date available, include it (shouldn't happen, but be safe)
+        console.warn('Invoice missing date:', invoice.invoice_number);
+        return true;
+      }
+      const invoiceDate = new Date(invoiceDateStr);
+      // Check if date is valid
+      if (isNaN(invoiceDate.getTime())) {
+        console.warn('Invalid date for invoice:', invoice.invoice_number, invoiceDateStr);
+        return true; // Include invoices with invalid dates
+      }
+      // Compare dates - be more inclusive by comparing timestamps
+      // Include invoices that fall within the range (inclusive of start and end)
       if (invoiceDate < dateRange.start || invoiceDate > dateRange.end) {
+        // Only log if it's clearly outside the range
+        if (invoiceDate < dateRange.start) {
+          console.log(`Invoice ${invoice.invoice_number} filtered out (before range): ${invoiceDate} < ${dateRange.start}`);
+        } else {
+          console.log(`Invoice ${invoice.invoice_number} filtered out (after range): ${invoiceDate} > ${dateRange.end}`);
+        }
         return false;
       }
     }
@@ -284,14 +401,16 @@ const Sales: React.FC = () => {
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
       return (
-        invoice.invoice_number.toLowerCase().includes(searchLower) ||
-        invoice.customer_name.toLowerCase().includes(searchLower) ||
-        invoice.customer_email.toLowerCase().includes(searchLower)
+        (invoice.invoice_number && invoice.invoice_number.toLowerCase().includes(searchLower)) ||
+        (invoice.customer_name && invoice.customer_name.toLowerCase().includes(searchLower)) ||
+        (invoice.customer_email && invoice.customer_email.toLowerCase().includes(searchLower))
       );
     }
     
     return true;
   });
+  
+  console.log(`Filtered invoices: ${filteredInvoices.length} out of ${invoices.length} total, activeTab: ${activeTab}, dateFilter: ${dateFilter}`);
 
   const paginatedInvoices = filteredInvoices.slice(
     (currentPage - 1) * itemsPerPage,
@@ -300,14 +419,68 @@ const Sales: React.FC = () => {
 
   const totalPages = Math.ceil(filteredInvoices.length / itemsPerPage);
 
-  const handleViewInvoice = (invoice: Invoice) => {
-    navigate(`/invoices/${invoice.id}`);
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    if (!invoice || !invoice.id) {
+      alert('Invalid invoice');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete invoice ${invoice.invoice_number}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const invoiceId = typeof invoice.id === 'string' ? invoice.id : String(invoice.id);
+      const response = await fetch(`${API_BASE_URL}/invoices/${invoiceId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          alert('Invoice deleted successfully');
+          // Refresh the sales data
+          fetchSalesData();
+        } else {
+          alert('Failed to delete invoice: ' + (data.error || 'Unknown error'));
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        alert('Failed to delete invoice: ' + (errorData.error || 'Unknown error'));
+      }
+    } catch (error: any) {
+      console.error('Failed to delete invoice:', error);
+      alert('Failed to delete invoice: ' + (error.message || 'Network error'));
+    }
   };
 
   const handleUpdateStatus = async (invoice: Invoice, newStatus: string) => {
-    setUpdatingStatus(invoice.id);
+    // Validate invoice ID
+    if (!invoice || !invoice.id || invoice.id === 'None' || invoice.id === 'undefined') {
+      console.error('Invalid invoice ID:', invoice);
+      alert('Error: Invoice ID is missing. Please refresh the page and try again.');
+      return;
+    }
+    
+    setUpdatingStatus(invoice.id as number);
     try {
-      const response = await fetch(`${API_BASE_URL}/invoices/${invoice.id}`, {
+      // Convert invoice ID to string for MongoDB ObjectId compatibility
+      const invoiceId = invoice.id ? (typeof invoice.id === 'string' ? invoice.id : String(invoice.id)) : null;
+      
+      if (!invoiceId || invoiceId === 'None' || invoiceId === 'undefined' || invoiceId === 'null') {
+        console.error('Invalid invoice ID after conversion:', invoiceId, 'Original:', invoice.id);
+        alert('Error: Invalid invoice ID. Please refresh the page and try again.');
+        setUpdatingStatus(null);
+        return;
+      }
+      
+      console.log('Updating invoice status:', { invoiceId, newStatus, invoice });
+      
+      const response = await fetch(`${API_BASE_URL}/invoices/${invoiceId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -327,7 +500,7 @@ const Sales: React.FC = () => {
         }
       } else {
         // Try alternative endpoint
-        const altResponse = await fetch(`${API_BASE_URL}/invoices/${invoice.id}/status`, {
+        const altResponse = await fetch(`${API_BASE_URL}/invoices/${invoiceId}/status`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -337,15 +510,21 @@ const Sales: React.FC = () => {
         });
 
         if (altResponse.ok) {
-          await fetchSalesData();
-          alert(`Sale status updated to ${newStatus}`);
+          const altData = await altResponse.json();
+          if (altData.success) {
+            await fetchSalesData();
+            alert(`Sale status updated to ${newStatus}`);
+          } else {
+            alert('Failed to update status: ' + (altData.error || 'Unknown error'));
+          }
         } else {
-          alert('Failed to update status');
+          const errorData = await altResponse.json().catch(() => ({ error: altResponse.statusText }));
+          alert('Failed to update status: ' + (errorData.error || `HTTP ${altResponse.status}`));
         }
       }
     } catch (error: any) {
       console.error('Error updating status:', error);
-      alert('Error updating status: ' + error.message);
+      alert('Error updating status: ' + (error.message || 'Unknown error'));
     } finally {
       setUpdatingStatus(null);
       setShowActionsMenu(null);
@@ -371,12 +550,27 @@ const Sales: React.FC = () => {
     }
   };
 
-  const handleAddProductToSale = () => {
-    if (!selectedProduct) return;
+  const handleAddProductToSale = (product?: any) => {
+    // Use passed product or fall back to selectedProduct state
+    const productToAdd = product || selectedProduct;
     
-    const existingItemIndex = saleForm.items.findIndex(item => item.product_id === selectedProduct.id);
-    const unitPrice = selectedProduct.price || 0;
-    const gstRate = selectedProduct.gst_rate || 18;
+    if (!productToAdd || !productToAdd.id) {
+      alert('Please select a valid product');
+      return;
+    }
+    
+    // Convert product ID to string for consistency (handle both string and number IDs)
+    const productId = typeof productToAdd.id === 'string' ? productToAdd.id : String(productToAdd.id);
+    
+    // Check if product already exists in items (handle both string and number IDs)
+    const existingItemIndex = saleForm.items.findIndex(item => {
+      if (!item || !item.product_id) return false;
+      const itemId = typeof item.product_id === 'string' ? item.product_id : String(item.product_id);
+      return itemId === productId;
+    });
+    
+    const unitPrice = productToAdd.price || 0;
+    const gstRate = productToAdd.gst_rate || 18;
     const quantity = 1;
     const subtotal = unitPrice * quantity;
     const gstAmount = (subtotal * gstRate) / 100;
@@ -385,9 +579,11 @@ const Sales: React.FC = () => {
     if (existingItemIndex >= 0) {
       // Update existing item
       const updatedItems = [...saleForm.items];
-      updatedItems[existingItemIndex].quantity += quantity;
-      updatedItems[existingItemIndex].total = updatedItems[existingItemIndex].unit_price * updatedItems[existingItemIndex].quantity * (1 + gstRate / 100);
-      setSaleForm({ ...saleForm, items: updatedItems });
+      if (updatedItems[existingItemIndex]) {
+        updatedItems[existingItemIndex].quantity += quantity;
+        updatedItems[existingItemIndex].total = updatedItems[existingItemIndex].unit_price * updatedItems[existingItemIndex].quantity * (1 + gstRate / 100);
+        setSaleForm({ ...saleForm, items: updatedItems });
+      }
     } else {
       // Add new item
       setSaleForm({
@@ -395,8 +591,8 @@ const Sales: React.FC = () => {
         items: [
           ...saleForm.items,
           {
-            product_id: selectedProduct.id,
-            product_name: selectedProduct.name,
+            product_id: productId,
+            product_name: productToAdd.name || 'Unknown Product',
             quantity: quantity,
             unit_price: unitPrice,
             gst_rate: gstRate,
@@ -407,6 +603,7 @@ const Sales: React.FC = () => {
     }
     setSelectedProduct(null);
     setProductSearch('');
+    setShowProductDropdown(false);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -444,19 +641,30 @@ const Sales: React.FC = () => {
 
     setCreatingSale(true);
     try {
-      const invoiceData = {
-        customer_id: saleForm.customer_id ? parseInt(saleForm.customer_id) : null,
-        customer_name: saleForm.customer_name,
-        customer_phone: saleForm.customer_phone,
-        invoice_date: saleForm.invoice_date,
-        notes: saleForm.notes,
-        status: saleForm.status,
-        items: saleForm.items.map(item => ({
+      // Validate and filter items to ensure all required fields are present
+      const validItems = saleForm.items
+        .filter(item => item && item.product_id && item.quantity > 0 && item.unit_price >= 0)
+        .map(item => ({
           product_id: item.product_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
-          total: item.total
-        })),
+          total: item.total || (item.unit_price * item.quantity)
+        }));
+      
+      if (validItems.length === 0) {
+        alert('Please add at least one valid product');
+        setCreatingSale(false);
+        return;
+      }
+
+      const invoiceData = {
+        customer_id: saleForm.customer_id ? parseInt(saleForm.customer_id) : null,
+        customer_name: saleForm.customer_name || '',
+        customer_phone: saleForm.customer_phone || '',
+        invoice_date: saleForm.invoice_date,
+        notes: saleForm.notes || '',
+        status: saleForm.status || 'pending',
+        items: validItems,
         total_amount: calculateTotal()
       };
 
@@ -483,8 +691,21 @@ const Sales: React.FC = () => {
             status: 'pending'
           });
           setShowCreateSaleModal(false);
-          // Refresh sales data
-          fetchSalesData();
+          // Refresh sales data with a delay to ensure database has updated
+          // Also reset date filter to 'all' temporarily to ensure new sale is visible
+          const previousFilter = dateFilter;
+          if (dateFilter !== 'all') {
+            setDateFilter('all');
+          }
+          setTimeout(() => {
+            fetchSalesData();
+            // Restore previous filter after a moment
+            if (previousFilter !== 'all') {
+              setTimeout(() => {
+                setDateFilter(previousFilter);
+              }, 1000);
+            }
+          }, 1000);
           alert(saleForm.status === 'draft' ? 'Draft saved successfully!' : 'Sale created successfully!');
         } else {
           alert('Failed to create sale: ' + (data.error || 'Unknown error'));
@@ -508,10 +729,12 @@ const Sales: React.FC = () => {
     }
   };
 
-  const filteredProductsForSale = products.filter(product =>
-    product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-    (product.description && product.description.toLowerCase().includes(productSearch.toLowerCase()))
-  );
+  const filteredProductsForSale = productSearch
+    ? products.filter(product =>
+        product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+        (product.description && product.description.toLowerCase().includes(productSearch.toLowerCase()))
+      )
+    : products; // Show all products when search is empty
 
   if (loading) {
     return (
@@ -616,6 +839,15 @@ const Sales: React.FC = () => {
               </svg>
             </div>
             <div className="flex items-center space-x-3">
+              <button
+                onClick={() => navigate('/reports')}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span>View Reports</span>
+              </button>
               <button
                 onClick={() => setShowCreateSaleModal(true)}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -761,8 +993,11 @@ const Sales: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  paginatedInvoices.map((invoice) => (
-                    <tr key={invoice.id} className="hover:bg-gray-50">
+                  paginatedInvoices.map((invoice) => {
+                    // Ensure invoice has a valid ID for key and actions
+                    const invoiceKey = invoice.id || invoice.invoice_number || `invoice-${Math.random()}`;
+                    return (
+                    <tr key={invoiceKey} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-semibold text-gray-900">
                           {formatCurrency(invoice.total_amount)}
@@ -795,33 +1030,18 @@ const Sales: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center justify-end space-x-2">
-                          <button
-                            onClick={() => handleViewInvoice(invoice)}
-                            className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
-                          >
-                            View
-                          </button>
                           <div className="relative">
                             <button
-                              onClick={() => setShowActionsMenu(showActionsMenu === invoice.id ? null : invoice.id)}
+                              onClick={() => setShowActionsMenu(showActionsMenu === invoiceKey ? null : invoiceKey)}
                               className="text-gray-600 hover:text-gray-900 p-1 rounded hover:bg-gray-100 transition-colors"
                             >
                               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
                                 <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
                               </svg>
                             </button>
-                            {showActionsMenu === invoice.id && (
+                            {showActionsMenu === invoiceKey && (
                               <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-10 border border-gray-200">
                                 <div className="py-1">
-                                  <button
-                                    onClick={() => {
-                                      handleViewInvoice(invoice);
-                                      setShowActionsMenu(null);
-                                    }}
-                                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                  >
-                                    View Details
-                                  </button>
                                   <button
                                     onClick={() => {
                                       navigate(`/invoices/${invoice.id}/edit`);
@@ -830,6 +1050,15 @@ const Sales: React.FC = () => {
                                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                   >
                                     Edit
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      handleDeleteInvoice(invoice);
+                                      setShowActionsMenu(null);
+                                    }}
+                                    className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                                  >
+                                    Delete
                                   </button>
                                   <button
                                     onClick={() => {
@@ -845,7 +1074,7 @@ const Sales: React.FC = () => {
                                   {invoice.status.toLowerCase() !== 'pending' && (
                                     <button
                                       onClick={() => handleUpdateStatus(invoice, 'pending')}
-                                      disabled={updatingStatus === invoice.id}
+                                      disabled={updatingStatus === invoice.id || !invoice.id}
                                       className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                                     >
                                       {updatingStatus === invoice.id ? 'Updating...' : 'Mark as Pending'}
@@ -854,7 +1083,7 @@ const Sales: React.FC = () => {
                                   {invoice.status.toLowerCase() !== 'paid' && (
                                     <button
                                       onClick={() => handleUpdateStatus(invoice, 'paid')}
-                                      disabled={updatingStatus === invoice.id}
+                                      disabled={updatingStatus === invoice.id || !invoice.id}
                                       className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                                     >
                                       {updatingStatus === invoice.id ? 'Updating...' : 'Mark as Paid'}
@@ -863,7 +1092,7 @@ const Sales: React.FC = () => {
                                   {invoice.status.toLowerCase() !== 'cancelled' && (
                                     <button
                                       onClick={() => handleUpdateStatus(invoice, 'cancelled')}
-                                      disabled={updatingStatus === invoice.id}
+                                      disabled={updatingStatus === invoice.id || !invoice.id}
                                       className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                                     >
                                       {updatingStatus === invoice.id ? 'Updating...' : 'Mark as Cancelled'}
@@ -872,7 +1101,7 @@ const Sales: React.FC = () => {
                                   {invoice.status.toLowerCase() !== 'done' && (
                                     <button
                                       onClick={() => handleUpdateStatus(invoice, 'done')}
-                                      disabled={updatingStatus === invoice.id}
+                                      disabled={updatingStatus === invoice.id || !invoice.id}
                                       className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                                     >
                                       {updatingStatus === invoice.id ? 'Updating...' : 'Mark as Done'}
@@ -885,7 +1114,8 @@ const Sales: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1060,32 +1290,57 @@ const Sales: React.FC = () => {
                   <div className="flex-1 relative">
                     <input
                       type="text"
-                      placeholder="Search products..."
+                      placeholder="Search products or click to see all..."
                       value={productSearch}
-                      onChange={(e) => setProductSearch(e.target.value)}
+                      onChange={(e) => {
+                        setProductSearch(e.target.value);
+                        setShowProductDropdown(true); // Show dropdown when typing
+                      }}
+                      onFocus={() => {
+                        setShowProductDropdown(true); // Show dropdown on focus
+                        // Always try to load products when user focuses on search
+                        if (products.length === 0 && !productsLoading) {
+                          fetchProducts();
+                        }
+                      }}
+                      onBlur={(e) => {
+                        // Delay hiding dropdown to allow click events
+                        setTimeout(() => setShowProductDropdown(false), 200);
+                      }}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    {productSearch && filteredProductsForSale.length > 0 && (
+                    {showProductDropdown && (
                       <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                        {filteredProductsForSale.map(product => (
-                          <button
-                            key={product.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedProduct(product);
-                              handleAddProductToSale();
-                            }}
-                            className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center justify-between"
-                          >
-                            <div>
-                              <div className="font-medium text-gray-900">{product.name}</div>
-                              <div className="text-sm text-gray-500">₹{product.price} | Stock: {product.stock_quantity}</div>
-                            </div>
-                            <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                            </svg>
-                          </button>
-                        ))}
+                        {productsLoading ? (
+                          <div className="px-4 py-2 text-sm text-gray-500">Loading products...</div>
+                        ) : products.length === 0 ? (
+                          <div className="px-4 py-2 text-sm text-gray-500">No products available. Please add products to inventory first.</div>
+                        ) : filteredProductsForSale.length > 0 ? (
+                          filteredProductsForSale.map(product => (
+                            <button
+                              key={product.id}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault(); // Prevent onBlur from firing before onClick
+                                // Pass product directly to avoid React state update timing issues
+                                handleAddProductToSale(product);
+                              }}
+                              className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center justify-between"
+                            >
+                              <div>
+                                <div className="font-medium text-gray-900">{product.name}</div>
+                                <div className="text-sm text-gray-500">₹{product.price || 0} | Stock: {product.stock_quantity || 0}</div>
+                              </div>
+                              <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                              </svg>
+                            </button>
+                          ))
+                        ) : productSearch ? (
+                          <div className="px-4 py-2 text-sm text-gray-500">No products found matching "{productSearch}"</div>
+                        ) : (
+                          <div className="px-4 py-2 text-sm text-gray-500">No products available. Please add products to inventory first.</div>
+                        )}
                       </div>
                     )}
                   </div>

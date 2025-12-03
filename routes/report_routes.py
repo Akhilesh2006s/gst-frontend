@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_login import login_required, current_user
-from models import Order, OrderItem, Customer, Product, Invoice, InvoiceItem
-from database import db
+from models import Order, OrderItem, Customer, Product, Invoice, InvoiceItem, get_db
 from bson import ObjectId
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -28,46 +27,66 @@ report_bp = Blueprint('report', __name__)
 def sales_summary():
     """Get sales summary with revenue, orders, customers"""
     try:
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Get user_id and filter by it
+        user_id = current_user.id
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        
         # Get date range (default: last 30 days)
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
-        # Total revenue from orders
+        # Total revenue from invoices (not orders, since we're using invoices)
         revenue_pipeline = [
-            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$match': {
+                'user_id': user_id_obj,
+                'created_at': {'$gte': start_date}
+            }},
             {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
         ]
-        revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+        revenue_result = list(database['invoices'].aggregate(revenue_pipeline))
         total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
         
-        # Total orders
-        total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
+        # Total invoices
+        total_orders = database['invoices'].count_documents({
+            'user_id': user_id_obj,
+            'created_at': {'$gte': start_date}
+        })
         
-        # Total customers
-        total_customers = db['customers'].count_documents({})
+        # Total customers for this user
+        total_customers = database['customers'].count_documents({'user_id': user_id_obj})
         
-        # Active customers (placed orders in period)
+        # Active customers (placed invoices in period)
         active_customers_pipeline = [
-            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$match': {
+                'user_id': user_id_obj,
+                'created_at': {'$gte': start_date}
+            }},
             {'$group': {'_id': '$customer_id'}},
             {'$count': 'active_customers'}
         ]
-        active_result = list(db['orders'].aggregate(active_customers_pipeline))
+        active_result = list(database['invoices'].aggregate(active_customers_pipeline))
         active_customers = active_result[0].get('active_customers', 0) if active_result else 0
         
         # Average order value
         avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
         
-        # Orders by status
+        # Invoices by status
         orders_by_status_pipeline = [
-            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$match': {
+                'user_id': user_id_obj,
+                'created_at': {'$gte': start_date}
+            }},
             {'$group': {
                 '_id': '$status',
                 'count': {'$sum': 1},
                 'revenue': {'$sum': '$total_amount'}
             }}
         ]
-        orders_by_status = list(db['orders'].aggregate(orders_by_status_pipeline))
+        orders_by_status = list(database['invoices'].aggregate(orders_by_status_pipeline))
         
         status_breakdown = {
             item['_id']: {
@@ -89,6 +108,8 @@ def sales_summary():
             }
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @report_bp.route('/api/sales-trends', methods=['GET'])
@@ -96,14 +117,26 @@ def sales_summary():
 def sales_trends():
     """Get sales trends over time (daily, weekly, monthly)"""
     try:
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        user_id = current_user.id
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        
         period = request.args.get('period', 'daily')  # daily, weekly, monthly
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
+        base_match = {
+            'user_id': user_id_obj,
+            'created_at': {'$gte': start_date}
+        }
+        
         if period == 'daily':
             # Group by day
             trends_pipeline = [
-                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$match': base_match},
                 {'$group': {
                     '_id': {'$dateToString': {'format': '%Y-%m-%d', 'date': '$created_at'}},
                     'orders': {'$sum': 1},
@@ -111,7 +144,7 @@ def sales_trends():
                 }},
                 {'$sort': {'_id': 1}}
             ]
-            trends = list(db['orders'].aggregate(trends_pipeline))
+            trends = list(database['invoices'].aggregate(trends_pipeline))
             
             data = [{
                 'date': trend['_id'],
@@ -122,7 +155,7 @@ def sales_trends():
         elif period == 'weekly':
             # Group by week
             trends_pipeline = [
-                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$match': base_match},
                 {'$group': {
                     '_id': {
                         'year': {'$year': '$created_at'},
@@ -133,7 +166,7 @@ def sales_trends():
                 }},
                 {'$sort': {'_id.year': 1, '_id.week': 1}}
             ]
-            trends = list(db['orders'].aggregate(trends_pipeline))
+            trends = list(database['invoices'].aggregate(trends_pipeline))
             
             data = [{
                 'period': f"Week {trend['_id']['week']}, {trend['_id']['year']}",
@@ -144,7 +177,7 @@ def sales_trends():
         else:  # monthly
             # Group by month
             trends_pipeline = [
-                {'$match': {'created_at': {'$gte': start_date}}},
+                {'$match': base_match},
                 {'$group': {
                     '_id': {
                         'year': {'$year': '$created_at'},
@@ -155,7 +188,7 @@ def sales_trends():
                 }},
                 {'$sort': {'_id.year': 1, '_id.month': 1}}
             ]
-            trends = list(db['orders'].aggregate(trends_pipeline))
+            trends = list(database['invoices'].aggregate(trends_pipeline))
             
             data = [{
                 'period': f"{trend['_id']['month']}/{trend['_id']['year']}",
@@ -169,6 +202,8 @@ def sales_trends():
             'data': data
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @report_bp.route('/api/top-customers', methods=['GET'])
@@ -176,12 +211,22 @@ def sales_trends():
 def top_customers():
     """Get top customers by revenue"""
     try:
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        user_id = current_user.id
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        
         limit = request.args.get('limit', 10, type=int)
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
         top_customers_pipeline = [
-            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$match': {
+                'user_id': user_id_obj,
+                'created_at': {'$gte': start_date}
+            }},
             {'$group': {
                 '_id': '$customer_id',
                 'order_count': {'$sum': 1},
@@ -197,7 +242,7 @@ def top_customers():
             }},
             {'$unwind': {'path': '$customer', 'preserveNullAndEmptyArrays': True}}
         ]
-        top_customers = list(db['orders'].aggregate(top_customers_pipeline))
+        top_customers = list(database['invoices'].aggregate(top_customers_pipeline))
         
         customers_data = []
         for item in top_customers:
@@ -215,6 +260,8 @@ def top_customers():
             'customers': customers_data
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @report_bp.route('/api/top-products', methods=['GET'])
@@ -222,12 +269,22 @@ def top_customers():
 def top_products():
     """Get top products by quantity sold"""
     try:
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        user_id = current_user.id
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        
         limit = request.args.get('limit', 10, type=int)
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
         top_products_pipeline = [
-            {'$match': {'created_at': {'$gte': start_date}}},
+            {'$match': {
+                'user_id': user_id_obj,
+                'created_at': {'$gte': start_date}
+            }},
             {'$unwind': '$items'},
             {'$group': {
                 '_id': '$items.product_id',
@@ -244,7 +301,7 @@ def top_products():
             }},
             {'$unwind': {'path': '$product', 'preserveNullAndEmptyArrays': True}}
         ]
-        top_products = list(db['orders'].aggregate(top_products_pipeline))
+        top_products = list(database['invoices'].aggregate(top_products_pipeline))
         
         products_data = []
         for item in top_products:
@@ -262,6 +319,8 @@ def top_products():
             'products': products_data
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @report_bp.route('/revenue-by-category', methods=['GET'])
@@ -350,6 +409,15 @@ def download_report():
         days = request.args.get('days', 30, type=int)
         start_date = datetime.now() - timedelta(days=days)
         
+        # Get database instance and current user filter
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Filter by current user's business (user_id) for multi-tenant safety
+        user_id = current_user.id
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        
         if format_type == 'excel' and OPENPYXL_AVAILABLE:
             wb = Workbook()
             
@@ -359,21 +427,30 @@ def download_report():
                 
                 # Get summary data
                 revenue_pipeline = [
-                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$match': {
+                        'user_id': user_id_obj,
+                        'created_at': {'$gte': start_date}
+                    }},
                     {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
                 ]
-                revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+                revenue_result = list(database['invoices'].aggregate(revenue_pipeline))
                 total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
                 
-                total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
-                total_customers = db['customers'].count_documents({})
+                total_orders = database['invoices'].count_documents({
+                    'user_id': user_id_obj,
+                    'created_at': {'$gte': start_date}
+                })
+                total_customers = database['customers'].count_documents({'user_id': user_id_obj})
                 
                 active_customers_pipeline = [
-                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$match': {
+                        'user_id': user_id_obj,
+                        'created_at': {'$gte': start_date}
+                    }},
                     {'$group': {'_id': '$customer_id'}},
                     {'$count': 'active_customers'}
                 ]
-                active_result = list(db['orders'].aggregate(active_customers_pipeline))
+                active_result = list(database['invoices'].aggregate(active_customers_pipeline))
                 active_customers = active_result[0].get('active_customers', 0) if active_result else 0
                 
                 # Write summary
@@ -402,7 +479,10 @@ def download_report():
                 
                 limit = request.args.get('limit', 50, type=int)
                 top_pipeline = [
-                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$match': {
+                        'user_id': user_id_obj,
+                        'created_at': {'$gte': start_date}
+                    }},
                     {'$group': {
                         '_id': '$customer_id',
                         'order_count': {'$sum': 1},
@@ -418,7 +498,7 @@ def download_report():
                     }},
                     {'$unwind': {'path': '$customer', 'preserveNullAndEmptyArrays': True}}
                 ]
-                top = list(db['orders'].aggregate(top_pipeline))
+                top = list(database['invoices'].aggregate(top_pipeline))
                 
                 headers = ['Rank', 'Customer Name', 'Email', 'Orders', 'Total Spent']
                 for col_num, header in enumerate(headers, 1):
@@ -441,7 +521,10 @@ def download_report():
                 
                 limit = request.args.get('limit', 50, type=int)
                 top_pipeline = [
-                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$match': {
+                        'user_id': user_id_obj,
+                        'created_at': {'$gte': start_date}
+                    }},
                     {'$unwind': '$items'},
                     {'$group': {
                         '_id': '$items.product_id',
@@ -458,7 +541,7 @@ def download_report():
                     }},
                     {'$unwind': {'path': '$product', 'preserveNullAndEmptyArrays': True}}
                 ]
-                top = list(db['orders'].aggregate(top_pipeline))
+                top = list(database['invoices'].aggregate(top_pipeline))
                 
                 headers = ['Rank', 'Product Name', 'SKU', 'Quantity Sold', 'Revenue']
                 for col_num, header in enumerate(headers, 1):
@@ -513,13 +596,19 @@ def download_report():
                 
                 # Get summary data
                 revenue_pipeline = [
-                    {'$match': {'created_at': {'$gte': start_date}}},
+                    {'$match': {
+                        'user_id': user_id_obj,
+                        'created_at': {'$gte': start_date}
+                    }},
                     {'$group': {'_id': None, 'total': {'$sum': '$total_amount'}}}
                 ]
-                revenue_result = list(db['orders'].aggregate(revenue_pipeline))
+                revenue_result = list(database['invoices'].aggregate(revenue_pipeline))
                 total_revenue = revenue_result[0].get('total', 0) if revenue_result else 0.0
                 
-                total_orders = db['orders'].count_documents({'created_at': {'$gte': start_date}})
+                total_orders = database['invoices'].count_documents({
+                    'user_id': user_id_obj,
+                    'created_at': {'$gte': start_date}
+                })
                 
                 # Summary table
                 data = [['Metric', 'Value']]

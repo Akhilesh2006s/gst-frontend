@@ -12,6 +12,8 @@ interface Customer {
   pincode: string;
   created_at: string;
   is_active: boolean;
+  order_count?: number;
+  visible_products_count?: number;
 }
 
 const Customers: React.FC = () => {
@@ -217,7 +219,10 @@ const Customers: React.FC = () => {
           setShowBillingAddress(false);
           setShowShippingAddress(false);
           setShowBankDetails(false);
-          await loadCustomers();
+          // Reload customers list after successful creation
+          setTimeout(() => {
+            loadCustomers();
+          }, 500); // Small delay to ensure database is updated
         } else {
           alert(`Failed to create customer: ${data.error || 'Unknown error'}`);
         }
@@ -434,7 +439,10 @@ const Customers: React.FC = () => {
                 
                 <div className="flex space-x-2">
                   <button
-                    onClick={() => navigate(`/customers/${customer.id}`)}
+                    onClick={() => {
+                      const customerId = String(customer.id);
+                      navigate(`/customers/${customerId}`);
+                    }}
                     className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors"
                   >
                     View

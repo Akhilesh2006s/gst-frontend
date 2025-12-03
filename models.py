@@ -864,8 +864,8 @@ class Order:
         self.total_amount = self.subtotal
 
     def to_dict(self):
-        return {
-            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+        # Build base dictionary without _id so MongoDB can auto-generate it
+        data = {
             'customer_id': ObjectId(self.customer_id) if self.customer_id and isinstance(self.customer_id, str) and ObjectId.is_valid(self.customer_id) else self.customer_id,
             'order_number': self.order_number,
             'order_date': self.order_date,
@@ -877,6 +877,10 @@ class Order:
             'updated_at': self.updated_at,
             'items': self.items
         }
+        # Only include _id when we actually have one; otherwise let MongoDB create it
+        if self.id:
+            data['_id'] = ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id
+        return data
     
     @classmethod
     def from_dict(cls, data):
@@ -895,11 +899,19 @@ class Order:
             raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
         data['updated_at'] = datetime.utcnow()
+        
+        # Remove _id if it's None or empty for insert operations
+        if '_id' in data and (data['_id'] is None or not data['_id']):
+            del data['_id']
+        
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
         else:
             result = db[self.collection_name].insert_one(data)
-            self.id = str(result.inserted_id)
+            if result and result.inserted_id:
+                self.id = str(result.inserted_id)
+            else:
+                raise ValueError("Failed to insert order: result is None or missing inserted_id")
         return self
     
     @classmethod
@@ -937,14 +949,18 @@ class OrderItem:
         self.total = self.quantity * self.unit_price
 
     def to_dict(self):
-        return {
-            '_id': ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id,
+        # Build base dictionary without _id so MongoDB can auto-generate it
+        data = {
             'order_id': ObjectId(self.order_id) if self.order_id and isinstance(self.order_id, str) and ObjectId.is_valid(self.order_id) else self.order_id,
             'product_id': ObjectId(self.product_id) if self.product_id and isinstance(self.product_id, str) and ObjectId.is_valid(self.product_id) else self.product_id,
             'quantity': self.quantity,
             'unit_price': self.unit_price,
             'total': self.total
         }
+        # Only include _id when we actually have one; otherwise let MongoDB create it
+        if self.id:
+            data['_id'] = ObjectId(self.id) if isinstance(self.id, str) and ObjectId.is_valid(self.id) else self.id
+        return data
     
     @classmethod
     def from_dict(cls, data):
@@ -964,11 +980,19 @@ class OrderItem:
         if db is None:
             raise ValueError("Database not initialized. Call init_app() first.")
         data = self.to_dict()
+        
+        # Remove _id if it's None or empty for insert operations
+        if '_id' in data and (data['_id'] is None or not data['_id']):
+            del data['_id']
+        
         if '_id' in data and data['_id']:
             db[self.collection_name].update_one({'_id': data['_id']}, {'$set': data})
         else:
             result = db[self.collection_name].insert_one(data)
-            self.id = str(result.inserted_id)
+            if result and result.inserted_id:
+                self.id = str(result.inserted_id)
+            else:
+                raise ValueError("Failed to insert order item: result is None or missing inserted_id")
         return self
     
     def __repr__(self):

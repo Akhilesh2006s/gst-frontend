@@ -52,14 +52,9 @@ const Reports: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
-  const [dateFrom, setDateFrom] = useState<string>(() => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  });
-  const [dateTo, setDateTo] = useState<string>(() => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  });
+  // Default to no date filter to show all invoices and sales
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -141,6 +136,7 @@ const Reports: React.FC = () => {
   const loadPurchasesData = async () => {
     try {
       setLoading(true);
+      console.log('Loading purchases from:', `${API_BASE_URL}/products/stock-movements?movement_type=in`);
       
       // Fetch stock movements with type 'in' (purchases)
       const response = await fetch(`${API_BASE_URL}/products/stock-movements?movement_type=in`, {
@@ -150,40 +146,64 @@ const Reports: React.FC = () => {
         }
       });
       
+      console.log('Purchases response status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Purchases response data:', data);
+        
         if (data.success) {
           let filteredMovements = data.movements || [];
+          console.log('Raw movements count:', filteredMovements.length);
           
           // Filter by date range
           if (dateFrom) {
             filteredMovements = filteredMovements.filter((mov: any) => {
               if (!mov.created_at) return false;
-              const movDate = new Date(mov.created_at);
-              const fromDate = new Date(dateFrom);
-              return movDate >= fromDate;
+              try {
+                const movDate = new Date(mov.created_at);
+                const fromDate = new Date(dateFrom);
+                fromDate.setHours(0, 0, 0, 0);
+                return movDate >= fromDate;
+              } catch (e) {
+                console.warn('Invalid date in movement:', mov.created_at);
+                return false;
+              }
             });
           }
           
           if (dateTo) {
             filteredMovements = filteredMovements.filter((mov: any) => {
               if (!mov.created_at) return false;
-              const movDate = new Date(mov.created_at);
-              const toDate = new Date(dateTo);
-              toDate.setHours(23, 59, 59, 999);
-              return movDate <= toDate;
+              try {
+                const movDate = new Date(mov.created_at);
+                const toDate = new Date(dateTo);
+                toDate.setHours(23, 59, 59, 999);
+                return movDate <= toDate;
+              } catch (e) {
+                console.warn('Invalid date in movement:', mov.created_at);
+                return false;
+              }
             });
           }
+          
+          console.log('Filtered movements count:', filteredMovements.length);
           
           // Load products to get purchase prices
           if (products.length === 0) {
             await loadProducts();
           }
           
-          // Enrich movements with product data
+          // Enrich movements with product data (handle both string and number IDs)
           const enrichedPurchases = filteredMovements.map((mov: any) => {
-            const product = products.find(p => p.id === mov.product_id);
-            const purchasePrice = product?.purchase_price || 0;
+            // Try to find product by matching IDs (handle both string and number)
+            const product = products.find(p => {
+              const pId = typeof p.id === 'string' ? p.id : String(p.id);
+              const movId = typeof mov.product_id === 'string' ? mov.product_id : String(mov.product_id);
+              return pId === movId;
+            });
+            
+            const purchasePrice = product?.purchase_price || product?.price || 0;
             const totalAmount = purchasePrice * (mov.quantity || 0);
             
             return {
@@ -195,11 +215,42 @@ const Reports: React.FC = () => {
             };
           });
           
+          console.log('Enriched purchases count:', enrichedPurchases.length);
+          
+          // Calculate purchase summary
+          let totalPurchaseAmount = 0;
+          let totalPurchaseQuantity = 0;
+          
+          enrichedPurchases.forEach((purchase: any) => {
+            totalPurchaseAmount += purchase.total_amount || 0;
+            totalPurchaseQuantity += purchase.quantity || 0;
+          });
+          
+          console.log(`Purchase Report Summary: Total Amount=${totalPurchaseAmount}, Total Quantity=${totalPurchaseQuantity}`);
+          
           setPurchases(enrichedPurchases);
+        } else {
+          console.error('Failed to load purchases:', data.error || 'Unknown error');
+          setPurchases([]);
+          if (data.error) {
+            console.error('Purchase error details:', data.error);
+          }
         }
+      } else {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: response.statusText || 'Unknown error' };
+        }
+        console.error('Failed to load purchases:', response.status, errorData);
+        setPurchases([]);
+        console.error('Purchase error details:', errorData);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load purchases data:', error);
+      console.error('Error details:', error.message || error.toString());
+      setPurchases([]);
     } finally {
       setLoading(false);
     }
@@ -232,45 +283,138 @@ const Reports: React.FC = () => {
         if (data.success) {
           let filteredInvoices = data.invoices || [];
           
-          // Filter by date range
+          // Filter by date range - use invoice_date or created_at as fallback
           if (dateFrom) {
             filteredInvoices = filteredInvoices.filter((inv: Invoice) => {
-              if (!inv.invoice_date) return false;
-              const invDate = new Date(inv.invoice_date);
-              const fromDate = new Date(dateFrom);
-              return invDate >= fromDate;
+              const invDateStr = inv.invoice_date || inv.created_at;
+              if (!invDateStr) return true; // Include if no date (shouldn't happen but be safe)
+              try {
+                const invDate = new Date(invDateStr);
+                const fromDate = new Date(dateFrom);
+                fromDate.setHours(0, 0, 0, 0);
+                return invDate >= fromDate;
+              } catch (e) {
+                console.warn('Invalid date in invoice:', invDateStr);
+                return true; // Include if date parsing fails
+              }
             });
           }
           
           if (dateTo) {
             filteredInvoices = filteredInvoices.filter((inv: Invoice) => {
-              if (!inv.invoice_date) return false;
-              const invDate = new Date(inv.invoice_date);
-              const toDate = new Date(dateTo);
-              toDate.setHours(23, 59, 59, 999);
-              return invDate <= toDate;
+              const invDateStr = inv.invoice_date || inv.created_at;
+              if (!invDateStr) return true; // Include if no date
+              try {
+                const invDate = new Date(invDateStr);
+                const toDate = new Date(dateTo);
+                toDate.setHours(23, 59, 59, 999);
+                return invDate <= toDate;
+              } catch (e) {
+                console.warn('Invalid date in invoice:', invDateStr);
+                return true; // Include if date parsing fails
+              }
             });
           }
           
-          // Calculate Sales (subtotal without tax)
+          console.log(`Filtered invoices for P&L: ${filteredInvoices.length} invoices`);
+          
+          // Calculate Sales (subtotal without tax) - track from invoices
           let totalSales = 0;
           let totalCOGS = 0; // Cost of Goods Sold
+          let totalTax = 0; // Total tax collected
+          let totalCGST = 0; // Total CGST
+          let totalSGST = 0; // Total SGST
+          let totalIGST = 0; // Total IGST
+          let invoiceCount = 0;
+          let draftCount = 0;
+          let invoicesWithoutSubtotal = 0;
+          
+          console.log(`Calculating P&L from ${filteredInvoices.length} invoices`);
           
           for (const invoice of filteredInvoices) {
-            // Sales = subtotal (without tax)
-            totalSales += invoice.subtotal || 0;
+            // Count all invoices but track drafts separately
+            if (invoice.status && invoice.status.toLowerCase() === 'draft') {
+              draftCount++;
+              // Still include drafts in calculation but mark them
+              console.log(`Draft invoice found: ${invoice.invoice_number || invoice.id}`);
+            }
+            
+            invoiceCount++;
+            
+            // Sales = subtotal (without tax) - this is the revenue
+            // If subtotal is missing, calculate from total_amount minus tax
+            let invoiceSubtotal = invoice.subtotal || 0;
+            let invoiceCGST = invoice.cgst_amount || 0;
+            let invoiceSGST = invoice.sgst_amount || 0;
+            let invoiceIGST = invoice.igst_amount || 0;
+            
+            // If invoice-level taxes are missing, calculate from items
+            if ((invoiceCGST === 0 && invoiceSGST === 0 && invoiceIGST === 0) && invoice.items && invoice.items.length > 0) {
+              let itemTaxTotal = 0;
+              for (const item of invoice.items) {
+                itemTaxTotal += item.gst_amount || 0;
+              }
+              // If items have GST, we need to determine CGST/SGST vs IGST
+              // For now, if invoice has customer_id, we can check states, but default to IGST split
+              // This is a simplified approach - in production, you'd check customer and business states
+              if (itemTaxTotal > 0) {
+                // Default: if CGST/SGST exist, use them; otherwise assume IGST
+                if (invoiceCGST === 0 && invoiceSGST === 0) {
+                  invoiceIGST = itemTaxTotal;
+                } else {
+                  // Use existing CGST/SGST split
+                  invoiceCGST = invoice.cgst_amount || 0;
+                  invoiceSGST = invoice.sgst_amount || 0;
+                }
+              }
+            }
+            
+            if (invoiceSubtotal === 0 && invoice.total_amount) {
+              const invoiceTax = invoiceCGST + invoiceSGST + invoiceIGST;
+              invoiceSubtotal = invoice.total_amount - invoiceTax;
+              invoicesWithoutSubtotal++;
+              console.log(`Invoice ${invoice.invoice_number || invoice.id} missing subtotal, calculated from total_amount: ${invoiceSubtotal}`);
+            }
+            
+            totalSales += invoiceSubtotal;
+            
+            // Add tax amounts (from invoice level or calculated from items)
+            totalCGST += invoiceCGST;
+            totalSGST += invoiceSGST;
+            totalIGST += invoiceIGST;
+            totalTax += invoiceCGST + invoiceSGST + invoiceIGST;
+            
+            if (invoiceCGST > 0 || invoiceSGST > 0 || invoiceIGST > 0) {
+              console.log(`Invoice ${invoice.invoice_number || invoice.id}: CGST=${invoiceCGST}, SGST=${invoiceSGST}, IGST=${invoiceIGST}, Total Tax=${invoiceCGST + invoiceSGST + invoiceIGST}`);
+            }
             
             // Calculate COGS from invoice items
             if (invoice.items && invoice.items.length > 0) {
               for (const item of invoice.items) {
-                // Find product to get purchase price
-                const product = products.find(p => p.id === item.product_id);
-                const purchasePrice = product?.purchase_price || 0;
+                // Find product to get purchase price (handle both string and number IDs)
+                const product = products.find(p => {
+                  const pId = typeof p.id === 'string' ? p.id : String(p.id);
+                  const itemId = typeof item.product_id === 'string' ? item.product_id : String(item.product_id);
+                  return pId === itemId;
+                });
+                
+                const purchasePrice = product?.purchase_price || product?.price || 0;
                 const quantity = item.quantity || 0;
-                totalCOGS += purchasePrice * quantity;
+                const itemCOGS = purchasePrice * quantity;
+                totalCOGS += itemCOGS;
+                
+                if (itemCOGS > 0) {
+                  console.log(`Product ${product?.name || 'Unknown'}: Qty=${quantity}, Purchase Price=${purchasePrice}, COGS=${itemCOGS}`);
+                }
               }
+            } else {
+              console.warn(`Invoice ${invoice.invoice_number || invoice.id} has no items`);
             }
           }
+          
+          console.log(`P&L Summary: Total Invoices=${invoiceCount}, Drafts=${draftCount}, Without Subtotal=${invoicesWithoutSubtotal}`);
+          
+          console.log(`P&L Calculation: Sales=${totalSales}, COGS=${totalCOGS}, Tax=${totalTax} (CGST=${totalCGST}, SGST=${totalSGST}, IGST=${totalIGST}), Invoices=${invoiceCount}`);
           
           // Gross Profit = Sales - COGS
           const grossProfit = totalSales - totalCOGS;
@@ -306,11 +450,28 @@ const Reports: React.FC = () => {
           
           setPlData({
             sales: totalSales,
+            tax: totalTax,
+            cgst: totalCGST,
+            sgst: totalSGST,
+            igst: totalIGST,
             cogs: totalCOGS,
             grossProfit: grossProfit,
             expenses: expenses,
             netProfit: netProfit,
-            stockValue: stockValue
+            stockValue: stockValue,
+            invoiceCount: invoiceCount
+          });
+          
+          console.log('P&L Data set:', {
+            sales: totalSales,
+            tax: totalTax,
+            cgst: totalCGST,
+            sgst: totalSGST,
+            igst: totalIGST,
+            cogs: totalCOGS,
+            grossProfit: grossProfit,
+            netProfit: netProfit,
+            invoiceCount: invoiceCount
           });
         }
       }
@@ -343,6 +504,8 @@ const Reports: React.FC = () => {
   const loadSalesData = async () => {
     try {
       setLoading(true);
+      console.log('Loading sales data from:', `${API_BASE_URL}/invoices/`);
+      
       const response = await fetch(`${API_BASE_URL}/invoices/`, {
         credentials: 'include',
         headers: {
@@ -350,37 +513,79 @@ const Reports: React.FC = () => {
         }
       });
       
+      console.log('Sales response status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Sales response data:', data);
+        
         if (data.success) {
           let filteredInvoices = data.invoices || [];
+          console.log('Raw invoices count:', filteredInvoices.length);
           
-          // Filter by date range
+          // Filter by date range - use invoice_date or created_at as fallback
           if (dateFrom) {
             filteredInvoices = filteredInvoices.filter((inv: Invoice) => {
-              if (!inv.invoice_date) return false;
-              const invDate = new Date(inv.invoice_date);
-              const fromDate = new Date(dateFrom);
-              return invDate >= fromDate;
+              const invDateStr = inv.invoice_date || inv.created_at;
+              if (!invDateStr) return true; // Include if no date (shouldn't happen but be safe)
+              try {
+                const invDate = new Date(invDateStr);
+                const fromDate = new Date(dateFrom);
+                fromDate.setHours(0, 0, 0, 0);
+                return invDate >= fromDate;
+              } catch (e) {
+                console.warn('Invalid date in invoice:', invDateStr);
+                return true; // Include if date parsing fails
+              }
             });
           }
           
           if (dateTo) {
             filteredInvoices = filteredInvoices.filter((inv: Invoice) => {
-              if (!inv.invoice_date) return false;
-              const invDate = new Date(inv.invoice_date);
-              const toDate = new Date(dateTo);
-              toDate.setHours(23, 59, 59, 999);
-              return invDate <= toDate;
+              const invDateStr = inv.invoice_date || inv.created_at;
+              if (!invDateStr) return true; // Include if no date
+              try {
+                const invDate = new Date(invDateStr);
+                const toDate = new Date(dateTo);
+                toDate.setHours(23, 59, 59, 999);
+                return invDate <= toDate;
+              } catch (e) {
+                console.warn('Invalid date in invoice:', invDateStr);
+                return true; // Include if date parsing fails
+              }
             });
           }
           
-          // Filter by customer
+          console.log(`Filtered invoices for Sales Report: ${filteredInvoices.length} invoices`);
+          
+          // Filter by customer (handle both string and number IDs)
           if (selectedCustomer) {
-            filteredInvoices = filteredInvoices.filter((inv: Invoice) => 
-              inv.customer_id === parseInt(selectedCustomer)
-            );
+            filteredInvoices = filteredInvoices.filter((inv: Invoice) => {
+              const invCustomerId = typeof inv.customer_id === 'string' ? inv.customer_id : String(inv.customer_id);
+              const selectedId = typeof selectedCustomer === 'string' ? selectedCustomer : String(selectedCustomer);
+              return invCustomerId === selectedId;
+            });
           }
+          
+          console.log('Filtered invoices count:', filteredInvoices.length);
+          
+          // Calculate summary statistics
+          let totalSalesAmount = 0;
+          let totalItems = 0;
+          let paidInvoices = 0;
+          let pendingInvoices = 0;
+          
+          filteredInvoices.forEach((inv: Invoice) => {
+            totalSalesAmount += inv.total_amount || inv.subtotal || 0;
+            totalItems += (inv.items?.length || 0);
+            if (inv.status && inv.status.toLowerCase() === 'paid') {
+              paidInvoices++;
+            } else {
+              pendingInvoices++;
+            }
+          });
+          
+          console.log(`Sales Report Summary: Total Amount=${totalSalesAmount}, Total Items=${totalItems}, Paid=${paidInvoices}, Pending=${pendingInvoices}`);
           
           // Sort by date (newest first)
           filteredInvoices.sort((a: Invoice, b: Invoice) => {
@@ -390,10 +595,28 @@ const Reports: React.FC = () => {
           });
           
           setInvoices(filteredInvoices);
+        } else {
+          console.error('Failed to load sales data:', data.error || 'Unknown error');
+          setInvoices([]);
+          if (data.error) {
+            console.error('Sales error details:', data.error);
+          }
         }
+      } else {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: response.statusText || 'Unknown error' };
+        }
+        console.error('Failed to load sales data:', response.status, errorData);
+        setInvoices([]);
+        console.error('Sales error details:', errorData);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load sales data:', error);
+      console.error('Error details:', error.message || error.toString());
+      setInvoices([]);
     } finally {
       setLoading(false);
     }
@@ -544,8 +767,22 @@ const Reports: React.FC = () => {
 
   const handleExportPDF = async () => {
     try {
-      // For now, we'll use a simple approach - in production, you'd call a backend endpoint
-      alert('PDF export functionality will be implemented via backend API');
+      // Use backend report export API to generate a PDF summary
+      const params = new URLSearchParams();
+      params.append('format', 'pdf');
+      params.append('type', 'summary'); // Currently we export overall sales summary
+
+      // Optionally pass a days parameter based on selected date range
+      if (dateFrom && dateTo) {
+        const fromDate = new Date(dateFrom);
+        const toDate = new Date(dateTo);
+        const diffTime = Math.abs(toDate.getTime() - fromDate.getTime());
+        const diffDays = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+        params.append('days', String(diffDays));
+      }
+
+      const url = `${API_BASE_URL}/reports/api/download?${params.toString()}`;
+      window.open(url, '_blank');
     } catch (error) {
       console.error('Failed to export PDF:', error);
       alert('Failed to export to PDF');
@@ -627,24 +864,6 @@ const Reports: React.FC = () => {
         </div>
         
         <div className="p-2">
-          {/* Taxes */}
-          <div className="mb-2">
-            <button
-              onClick={() => setActiveCategory(activeCategory === 'taxes' ? '' : 'taxes')}
-              className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-md"
-            >
-              <span>Taxes</span>
-              <svg
-                className={`h-4 w-4 transform transition-transform ${activeCategory === 'taxes' ? 'rotate-180' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-
           {/* Transaction Reports */}
           <div className="mb-2">
             <button
@@ -1235,37 +1454,145 @@ const Reports: React.FC = () => {
                   <p className="text-gray-600">Loading P&L Statement...</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Transaction Type (without tax)
-                        </th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Total Amount
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {plData ? (
-                        <>
-                          <tr className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                              Sales (+)
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
-                              {formatCurrency(plData.sales || 0)}
-                            </td>
-                          </tr>
-                          <tr className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                              Gross Profit
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
-                              {formatCurrency(plData.grossProfit || 0)}
-                            </td>
-                          </tr>
+                <>
+                  {/* Summary Info */}
+                  {plData && plData.invoiceCount !== undefined && (
+                    <div className="p-4 bg-blue-50 border-b border-gray-200">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-3">
+                        <div>
+                          <span className="text-gray-600">Total Invoices:</span>
+                          <span className="ml-2 font-semibold text-gray-900">{plData.invoiceCount || 0}</span>
+                        </div>
+                        {plData.tax !== undefined && plData.tax > 0 && (
+                          <div>
+                            <span className="text-gray-600">Total Tax:</span>
+                            <span className="ml-2 font-semibold text-gray-900">{formatCurrency(plData.tax || 0)}</span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-gray-600">COGS:</span>
+                          <span className="ml-2 font-semibold text-gray-900">{formatCurrency(plData.cogs || 0)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Gross Profit:</span>
+                          <span className="ml-2 font-semibold text-green-600">{formatCurrency(plData.grossProfit || 0)}</span>
+                        </div>
+                      </div>
+                      {/* Tax Breakdown */}
+                      {(plData.cgst > 0 || plData.sgst > 0 || plData.igst > 0) && (
+                        <div className="grid grid-cols-3 gap-4 text-xs pt-3 border-t border-blue-200">
+                          {plData.cgst > 0 && (
+                            <div>
+                              <span className="text-gray-600">CGST:</span>
+                              <span className="ml-2 font-semibold text-gray-900">{formatCurrency(plData.cgst || 0)}</span>
+                            </div>
+                          )}
+                          {plData.sgst > 0 && (
+                            <div>
+                              <span className="text-gray-600">SGST:</span>
+                              <span className="ml-2 font-semibold text-gray-900">{formatCurrency(plData.sgst || 0)}</span>
+                            </div>
+                          )}
+                          {plData.igst > 0 && (
+                            <div>
+                              <span className="text-gray-600">IGST:</span>
+                              <span className="ml-2 font-semibold text-gray-900">{formatCurrency(plData.igst || 0)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Transaction Type (without tax)
+                          </th>
+                          <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Total Amount
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {plData ? (
+                          <>
+                            <tr className="hover:bg-gray-50">
+                              <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                                Sales (Subtotal)
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
+                                {formatCurrency(plData.sales || 0)}
+                              </td>
+                            </tr>
+                            {/* Tax Breakdown */}
+                            {plData.tax > 0 && (
+                              <>
+                                {plData.cgst > 0 && (
+                                  <tr className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 text-sm text-gray-700 pl-8">
+                                      CGST (Central GST)
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                                      {formatCurrency(plData.cgst || 0)}
+                                    </td>
+                                  </tr>
+                                )}
+                                {plData.sgst > 0 && (
+                                  <tr className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 text-sm text-gray-700 pl-8">
+                                      SGST (State GST)
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                                      {formatCurrency(plData.sgst || 0)}
+                                    </td>
+                                  </tr>
+                                )}
+                                {plData.igst > 0 && (
+                                  <tr className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 text-sm text-gray-700 pl-8">
+                                      IGST (Integrated GST)
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                                      {formatCurrency(plData.igst || 0)}
+                                    </td>
+                                  </tr>
+                                )}
+                                <tr className="hover:bg-gray-50 bg-gray-50">
+                                  <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                                    Total Tax Collected
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
+                                    {formatCurrency(plData.tax || 0)}
+                                  </td>
+                                </tr>
+                                <tr className="hover:bg-gray-50">
+                                  <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                                    Total Sales (Including Tax)
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
+                                    {formatCurrency((plData.sales || 0) + (plData.tax || 0))}
+                                  </td>
+                                </tr>
+                              </>
+                            )}
+                            <tr className="hover:bg-gray-50">
+                              <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                                Cost of Goods Sold (COGS)
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-red-600 text-right">
+                                -{formatCurrency(plData.cogs || 0)}
+                              </td>
+                            </tr>
+                            <tr className="hover:bg-gray-50">
+                              <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                                Gross Profit
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
+                                {formatCurrency(plData.grossProfit || 0)}
+                              </td>
+                            </tr>
                           {includeStockValue && plData.stockValue > 0 && (
                             <tr className="hover:bg-gray-50">
                               <td className="px-6 py-4 text-sm font-medium text-gray-900">
@@ -1295,6 +1622,7 @@ const Reports: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </div>
           </div>

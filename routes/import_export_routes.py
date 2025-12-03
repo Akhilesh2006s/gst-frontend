@@ -376,17 +376,40 @@ def import_products():
             wb = load_workbook(BytesIO(file_bytes), read_only=True)
             ws = wb.active
             
-            # Get headers from first row
-            headers = [cell.value for cell in ws[1] if cell.value]
+            # Get headers from first row - handle None cells
+            headers = []
+            try:
+                for cell in ws[1]:
+                    if cell and cell.value is not None:
+                        headers.append(str(cell.value).strip())
+            except Exception as e:
+                return jsonify({'success': False, 'error': f'Error reading headers: {str(e)}'}), 400
+            
+            if not headers:
+                return jsonify({'success': False, 'error': 'No headers found in Excel file'}), 400
             
             # Read data rows
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if any(cell for cell in row):  # Skip empty rows
+            for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                try:
+                    # Skip None rows or rows with all None values
+                    if row is None:
+                        continue
+                    if not any(cell is not None and str(cell).strip() for cell in row):
+                        continue
+                    
                     row_dict = {}
                     for idx, header in enumerate(headers):
-                        if idx < len(row):
-                            row_dict[header] = str(row[idx]) if row[idx] is not None else ''
-                    rows.append(row_dict)
+                        if header:  # Only process non-empty headers
+                            if idx < len(row) and row[idx] is not None:
+                                row_dict[header] = str(row[idx]).strip()
+                            else:
+                                row_dict[header] = ''
+                    if row_dict:  # Only add non-empty row dicts
+                        rows.append(row_dict)
+                except Exception as e:
+                    # Skip problematic rows but log the error
+                    print(f"Warning: Error processing row {row_num}: {e}")
+                    continue
         else:
             # Read CSV file
             stream = StringIO(file_bytes.decode("UTF8"), newline=None)
@@ -399,10 +422,22 @@ def import_products():
         
         for row_num, row in enumerate(rows, start=2):
             try:
+                # Validate row is not None and is a dict
+                if row is None:
+                    errors.append(f"Row {row_num}: Row is None")
+                    skipped += 1
+                    continue
+                if not isinstance(row, dict):
+                    errors.append(f"Row {row_num}: Invalid row format")
+                    skipped += 1
+                    continue
+                
                 # Handle vegetable-specific columns - check for various possible column name variations
                 # Vegetable Name (English) - could be "Vegetable Name", "Product Name", "Name", "ple Name", etc.
                 vegetable_name = ''
-                for key in row.keys():
+                # Ensure row has keys() method (is a dict)
+                row_keys = row.keys() if hasattr(row, 'keys') and isinstance(row, dict) else []
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     # Check for vegetable name columns (excluding Hindi)
                     if ('vegetable' in key_lower or 'product' in key_lower or 'ple name' in key_lower) and 'name' in key_lower and 'hindi' not in key_lower:
@@ -429,7 +464,7 @@ def import_products():
                 
                 # Vegetable Name (Hindi)
                 vegetable_name_hindi = ''
-                for key in row.keys():
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     if 'hindi' in key_lower or '(hindi)' in key_lower or 'ble name' in key_lower:
                         val = str(row.get(key, '') or '').strip()
@@ -466,7 +501,7 @@ def import_products():
                 rate_per_kg = None
                 
                 # Quantity (gm) - handle truncated headers like "uantity (gm"
-                for key in row.keys():
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     if 'quantity' in key_lower and ('gm' in key_lower or 'g)' in key_lower) and 'kg' not in key_lower:
                         try:
@@ -478,7 +513,7 @@ def import_products():
                             break
                 
                 # Quantity (kg) - handle truncated headers like "uantity (k"
-                for key in row.keys():
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     if 'quantity' in key_lower and ('kg' in key_lower or 'k)' in key_lower):
                         try:
@@ -490,7 +525,7 @@ def import_products():
                             break
                 
                 # Rate (per gm) - handle truncated headers like "ate (per gnate"
-                for key in row.keys():
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     if 'rate' in key_lower and ('per' in key_lower or 'per' in key) and ('gm' in key_lower or 'gnate' in key_lower or 'g)' in key_lower) and 'kg' not in key_lower:
                         try:
@@ -502,7 +537,7 @@ def import_products():
                             break
                 
                 # Rate (per kg) - handle truncated headers like "(per kg)"
-                for key in row.keys():
+                for key in row_keys:
                     key_lower = key.lower().strip()
                     if ('rate' in key_lower or key_lower.startswith('(')) and ('per' in key_lower or 'per' in key) and ('kg' in key_lower or 'k)' in key_lower):
                         try:
@@ -814,36 +849,148 @@ def import_stock():
             from openpyxl import load_workbook
             wb = load_workbook(BytesIO(file_bytes), read_only=True)
             ws = wb.active
-            headers = [cell.value for cell in ws[1] if cell.value]
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if any(cell for cell in row):
+            
+            # Get headers - handle None cells
+            headers = []
+            try:
+                header_row = ws[1]
+                if header_row is None:
+                    return jsonify({'success': False, 'error': 'Header row is None'}), 400
+                for cell in header_row:
+                    if cell is not None and hasattr(cell, 'value') and cell.value is not None:
+                        headers.append(str(cell.value).strip())
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return jsonify({'success': False, 'error': f'Error reading headers: {str(e)}'}), 400
+            
+            if not headers:
+                return jsonify({'success': False, 'error': 'No headers found in Excel file'}), 400
+            
+            # Read data rows
+            for row_num, row_tuple in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                try:
+                    # Skip None rows
+                    if row_tuple is None:
+                        print(f"Warning: Row {row_num} tuple is None, skipping")
+                        continue
+                    
+                    # Ensure row is iterable (tuple or list)
+                    if not isinstance(row_tuple, (tuple, list)):
+                        print(f"Warning: Row {row_num} is not iterable (type: {type(row_tuple)}), skipping")
+                        continue
+                    
+                    # Check if row has any non-empty values
+                    has_data = False
+                    try:
+                        for cell in row_tuple:
+                            if cell is not None:
+                                try:
+                                    cell_str = str(cell).strip()
+                                    if cell_str:
+                                        has_data = True
+                                        break
+                                except:
+                                    pass
+                    except Exception as e:
+                        print(f"Warning: Error checking row {row_num} data: {e}")
+                        continue
+                    
+                    if not has_data:
+                        continue
+                    
+                    # Build row dictionary safely
                     row_dict = {}
-                    for idx, header in enumerate(headers):
-                        if idx < len(row):
-                            row_dict[header] = str(row[idx]) if row[idx] is not None else ''
-                    rows.append(row_dict)
+                    try:
+                        for idx, header in enumerate(headers):
+                            if header and isinstance(header, str):  # Only process valid string headers
+                                try:
+                                    if idx < len(row_tuple):
+                                        cell_value = row_tuple[idx]
+                                        if cell_value is not None:
+                                            row_dict[str(header)] = str(cell_value).strip()
+                                        else:
+                                            row_dict[str(header)] = ''
+                                    else:
+                                        row_dict[str(header)] = ''
+                                except (IndexError, TypeError) as e:
+                                    row_dict[str(header)] = ''
+                    except Exception as e:
+                        print(f"Warning: Error building row_dict for row {row_num}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
+                    
+                    # Only add valid non-empty row dicts
+                    if row_dict and isinstance(row_dict, dict) and len(row_dict) > 0:
+                        rows.append(row_dict)
+                    else:
+                        print(f"Warning: Row {row_num} produced invalid or empty row_dict, skipping")
+                except Exception as e:
+                    # Skip problematic rows but log the error
+                    import traceback
+                    print(f"Warning: Error processing row {row_num}: {e}")
+                    traceback.print_exc()
+                    continue
         else:
+            # Read CSV file
             stream = StringIO(file_bytes.decode("UTF8"), newline=None)
             csv_reader = csv.DictReader(stream)
-            rows = list(csv_reader)
+            rows = []
+            for row in csv_reader:
+                # Validate CSV rows are not None
+                if row is not None and isinstance(row, dict):
+                    rows.append(row)
         
         if not rows:
             return jsonify({'success': False, 'error': 'No data found in file'}), 400
+        
+        # Get database connection dynamically (once, outside the loop)
+        try:
+            from models import get_db
+            database = get_db()
+            if database is None:
+                return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Database error: {str(e)}'}), 500
         
         imported = 0
         skipped = 0
         errors = []
         
         def get_field_value(row_dict, include_terms, exclude_terms=None):
+            if row_dict is None:
+                return ''
+            if not isinstance(row_dict, dict):
+                return ''
             exclude_terms = exclude_terms or []
-            for key, value in row_dict.items():
-                if not key:
-                    continue
-                key_lower = key.lower().strip()
-                if all(term in key_lower for term in include_terms):
-                    if any(term in key_lower for term in exclude_terms):
+            try:
+                # Safely get items from dict
+                items = row_dict.items() if hasattr(row_dict, 'items') else []
+                for key, value in items:
+                    if key is None:
                         continue
-                    return str(value or '').strip()
+                    try:
+                        key_str = str(key).lower().strip()
+                        if not key_str:
+                            continue
+                        if all(term in key_str for term in include_terms):
+                            if any(term in key_str for term in exclude_terms):
+                                continue
+                            return str(value or '').strip()
+                    except Exception as e:
+                        print(f"Error processing key in get_field_value: {e}")
+                        continue
+            except (TypeError, AttributeError) as e:
+                print(f"Error in get_field_value (TypeError/AttributeError): {e}")
+                import traceback
+                traceback.print_exc()
+            except Exception as e:
+                print(f"Error in get_field_value: {e}")
+                import traceback
+                traceback.print_exc()
             return ''
 
         def parse_float(val):
@@ -861,10 +1008,29 @@ def import_stock():
 
         for row_num, row in enumerate(rows, start=2):
             try:
+                # Validate row is not None and is a dict
+                if row is None:
+                    errors.append(f"Row {row_num}: Row is None")
+                    skipped += 1
+                    continue
+                if not isinstance(row, dict):
+                    errors.append(f"Row {row_num}: Invalid row format (expected dict, got {type(row).__name__})")
+                    skipped += 1
+                    continue
+                
+                # Ensure row has keys() method and is accessible
+                try:
+                    _ = row.keys()
+                except (AttributeError, TypeError) as e:
+                    errors.append(f"Row {row_num}: Cannot access row keys: {str(e)}")
+                    skipped += 1
+                    continue
+                
                 product = None
-                product_id = row.get('Product ID', '').strip()
-                sku = row.get('SKU', '').strip()
-                product_name = row.get('Product Name', '').strip() or row.get('Name', '').strip()
+                # Safely get values with None handling
+                product_id = str(row.get('Product ID') or '').strip()
+                sku = str(row.get('SKU') or '').strip()
+                product_name = str(row.get('Product Name') or '').strip() or str(row.get('Name') or '').strip()
                 vegetable_name = get_field_value(row, ['vegetable', 'name'], ['hindi']) or product_name
                 vegetable_name_hindi = get_field_value(row, ['vegetable', 'name', 'hindi'])
                 quantity_gm_str = get_field_value(row, ['quantity', 'gm'])
@@ -882,21 +1048,21 @@ def import_stock():
                 
                 if product_id:
                     try:
-                        product_doc = db['products'].find_one({'_id': ObjectId(int(product_id)), 'user_id': user_id_obj, 'is_active': True})
+                        product_doc = database['products'].find_one({'_id': ObjectId(int(product_id)), 'user_id': user_id_obj, 'is_active': True})
                         product = Product.from_dict(product_doc) if product_doc else None
                     except (ValueError, TypeError):
                         pass
                 
                 if not product and sku:
-                    product_doc = db['products'].find_one({'sku': sku, 'user_id': user_id_obj, 'is_active': True})
+                    product_doc = database['products'].find_one({'sku': sku, 'user_id': user_id_obj, 'is_active': True})
                     product = Product.from_dict(product_doc) if product_doc else None
                 
                 if not product and product_name:
-                    product_doc = db['products'].find_one({'name': product_name, 'user_id': user_id_obj, 'is_active': True})
+                    product_doc = database['products'].find_one({'name': product_name, 'user_id': user_id_obj, 'is_active': True})
                     product = Product.from_dict(product_doc) if product_doc else None
 
                 if not product and vegetable_name:
-                    product_doc = db['products'].find_one({'name': vegetable_name, 'user_id': user_id_obj, 'is_active': True})
+                    product_doc = database['products'].find_one({'name': vegetable_name, 'user_id': user_id_obj, 'is_active': True})
                     product = Product.from_dict(product_doc) if product_doc else None
 
                 price_per_kg = parse_float(rate_per_kg_str)
@@ -910,7 +1076,7 @@ def import_stock():
                     unique_sku = f"{sku_slug}-{datetime.utcnow().strftime('%H%M%S')}"
                     counter = 1
                     gen_sku = unique_sku
-                    while db['products'].find_one({'sku': gen_sku, 'user_id': user_id_obj}):
+                    while database['products'].find_one({'sku': gen_sku, 'user_id': user_id_obj}):
                         gen_sku = f"{unique_sku}-{counter}"
                         counter += 1
                     
@@ -934,7 +1100,7 @@ def import_stock():
                     skipped += 1
                     continue
                 
-                quantity_str = row.get('Quantity', '').strip() or row.get('Qty', '').strip()
+                quantity_str = str(row.get('Quantity') or '').strip() or str(row.get('Qty') or '').strip()
                 if not quantity_str:
                     quantity_str = quantity_gm_str or ''
                 
@@ -989,8 +1155,8 @@ def import_stock():
                     skipped += 1
                     continue
                 
-                reference = row.get('Reference', '').strip() or f'Bulk import - Row {row_num}'
-                notes = row.get('Notes', '').strip() or f'Stock {movement_type} from Excel import'
+                reference = str(row.get('Reference') or '').strip() or f'Bulk import - Row {row_num}'
+                notes = str(row.get('Notes') or '').strip() or f'Stock {movement_type} from Excel import'
                 
                 movement = StockMovement(
                     product_id=product.id,
@@ -1011,9 +1177,27 @@ def import_stock():
                 movement.save()
                 imported += 1
                 
-            except Exception as e:
-                errors.append(f"Row {row_num}: {str(e)}")
+            except TypeError as e:
+                # Handle 'NoneType' object is not subscriptable errors
+                if "'NoneType' object is not subscriptable" in str(e) or "not subscriptable" in str(e):
+                    errors.append(f"Row {row_num}: Invalid data format - row contains None values")
+                else:
+                    errors.append(f"Row {row_num}: {str(e)}")
                 skipped += 1
+                import traceback
+                print(f"Error in row {row_num}: {e}")
+                traceback.print_exc()
+                continue
+            except Exception as e:
+                error_msg = str(e)
+                if "'NoneType' object is not subscriptable" in error_msg or "not subscriptable" in error_msg:
+                    errors.append(f"Row {row_num}: Invalid data format - row contains None values")
+                else:
+                    errors.append(f"Row {row_num}: {error_msg}")
+                skipped += 1
+                import traceback
+                print(f"Error in row {row_num}: {e}")
+                traceback.print_exc()
                 continue
         
         return jsonify({
@@ -1028,4 +1212,5 @@ def import_stock():
         print(f"Error in stock import: {str(e)}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
+
 

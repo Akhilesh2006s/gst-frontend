@@ -14,6 +14,16 @@ interface Customer {
   pincode: string;
   created_at: string;
   is_active: boolean;
+  orders?: Order[];
+  orders_count?: number;
+  visible_products?: Array<{
+    id: string;
+    name: string;
+    price: number;
+    stock_quantity: number;
+    sku: string;
+  }>;
+  visible_products_count?: number;
 }
 
 interface Invoice {
@@ -64,16 +74,15 @@ const CustomerDetail: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      // Ensure id is a valid number
-      const customerId = id ? parseInt(id, 10) : null;
-      if (!customerId || isNaN(customerId)) {
+      // Use id as string (MongoDB ObjectId strings)
+      if (!id) {
         setError('Invalid customer ID');
         setLoading(false);
         return;
       }
       
-      // Load customer details
-      const customerResponse = await fetch(`${API_BASE_URL}/admin/customers/${customerId}`, {
+      // Load customer details - use id directly as string
+      const customerResponse = await fetch(`${API_BASE_URL}/admin/customers/${id}`, {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json'
@@ -87,11 +96,16 @@ const CustomerDetail: React.FC = () => {
         if (customerData.success && customerData.customer) {
           setCustomer(customerData.customer);
           
+          // Use orders from API response if available
+          if (customerData.customer.orders) {
+            setOrders(customerData.customer.orders);
+          } else {
+            // Fallback: Load customer orders separately
+            loadOrders(customerData.customer.id);
+          }
+          
           // Load customer invoices
           loadInvoices(customerData.customer.id);
-          
-          // Load customer orders
-          loadOrders(customerData.customer.id);
           
           // Load customer-specific prices
           loadCustomerPrices(customerData.customer.id);
@@ -113,9 +127,9 @@ const CustomerDetail: React.FC = () => {
     }
   };
 
-  const loadInvoices = async (customerId: number) => {
+  const loadInvoices = async (customerId: string | number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/invoices?customer_id=${customerId}`, {
+      const response = await fetch(`${API_BASE_URL}/invoices?customer_id=${String(customerId)}`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -130,9 +144,9 @@ const CustomerDetail: React.FC = () => {
     }
   };
 
-  const loadOrders = async (customerId: number) => {
+  const loadOrders = async (customerId: string | number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/orders?customer_id=${customerId}`, {
+      const response = await fetch(`${API_BASE_URL}/admin/orders?customer_id=${String(customerId)}`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -147,9 +161,9 @@ const CustomerDetail: React.FC = () => {
     }
   };
 
-  const loadCustomerPrices = async (customerId: number) => {
+  const loadCustomerPrices = async (customerId: string | number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/products/customer-prices?customer_id=${customerId}`, {
+      const response = await fetch(`${API_BASE_URL}/products/customer-prices?customer_id=${String(customerId)}`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -290,6 +304,7 @@ const CustomerDetail: React.FC = () => {
               { key: 'details', label: 'Details', icon: '👤' },
               { key: 'invoices', label: 'Invoices', icon: '🧾' },
               { key: 'orders', label: 'Orders', icon: '📦' },
+              { key: 'products', label: 'Visible Products', icon: '🛍️' },
               { key: 'pricing', label: 'Pricing', icon: '💰' }
             ].map((tab) => (
               <button
@@ -500,6 +515,55 @@ const CustomerDetail: React.FC = () => {
           )}
 
           {/* Pricing Tab */}
+          {activeTab === 'products' && (
+            <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">
+                  Visible Products ({customer.visible_products_count || 0})
+                </h2>
+              </div>
+              {customer.visible_products && customer.visible_products.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-white/20">
+                        <th className="text-left py-3 px-4 text-gray-300 font-medium">Product Name</th>
+                        <th className="text-left py-3 px-4 text-gray-300 font-medium">SKU</th>
+                        <th className="text-left py-3 px-4 text-gray-300 font-medium">Price</th>
+                        <th className="text-left py-3 px-4 text-gray-300 font-medium">Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customer.visible_products.map((product) => (
+                        <tr key={product.id} className="border-b border-white/10 hover:bg-white/5">
+                          <td className="py-3 px-4 text-white">{product.name}</td>
+                          <td className="py-3 px-4 text-gray-300">{product.sku || 'N/A'}</td>
+                          <td className="py-3 px-4 text-gray-300">
+                            ₹{product.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-4 text-gray-300">
+                            <span className={product.stock_quantity > 0 ? 'text-green-400' : 'text-red-400'}>
+                              {product.stock_quantity}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {customer.visible_products_count && customer.visible_products_count > customer.visible_products.length && (
+                    <p className="text-gray-400 text-sm mt-4 text-center">
+                      Showing {customer.visible_products.length} of {customer.visible_products_count} products
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <p className="text-gray-400">No products visible to this customer</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'pricing' && (
             <div className="backdrop-blur-xl bg-white/10 rounded-3xl shadow-2xl border border-white/20 p-6">
               <div className="flex items-center justify-between mb-6">

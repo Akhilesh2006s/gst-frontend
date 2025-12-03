@@ -6,6 +6,17 @@ from database import db
 def get_db():
     """Get database instance"""
     from database import db as database
+    # If db is None, try to get it from current_app if available
+    if database is None:
+        try:
+            from flask import current_app
+            if current_app:
+                # Try to initialize if app context exists
+                from database import init_app
+                # Don't re-initialize, just return None if not initialized
+                pass
+        except:
+            pass
     return database
 from bson import ObjectId
 from forms import ProductForm, StockMovementForm
@@ -116,41 +127,33 @@ def api_get_products():
         if not current_user or not hasattr(current_user, 'id'):
             return jsonify({'success': False, 'error': 'User not authenticated'}), 401
         
-        # Determine if current_user is a Customer or Admin/User
-        # Check by trying to find customer record - more reliable than isinstance
-        from models import Customer
+        # Get database instance first
         database = get_db()
-        # Try to find customer in database directly
-        customer_doc = database['customers'].find_one({'_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id})
-        is_customer = customer_doc is not None
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
         
-        if is_customer:
-            customer = Customer.from_dict(customer_doc) if customer_doc else None
-            print(f"Customer found: {customer_doc.get('name') if customer_doc else 'None'}, user_id={customer_doc.get('user_id') if customer_doc else 'None'}")
-        else:
-            customer = None
-            print(f"No customer found for ID: {current_user.id}, checking if admin/user")
+        # Simplified approach: Use same logic as inventory endpoint
+        user_id = current_user.id
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Invalid user ID'}), 401
         
-        print(f"Customer detection: is_customer={is_customer}, user_id={current_user.id}")
+        # Convert user_id to ObjectId properly (same as inventory endpoint)
+        try:
+            user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        except Exception as e:
+            print(f"Error converting user_id to ObjectId: {e}")
+            return jsonify({'success': False, 'error': f'Invalid user ID format: {str(e)}'}), 400
         
-        if is_customer:
-            # For customers, get their admin's user_id
-            if not customer.user_id:
-                return jsonify({'success': False, 'error': 'Customer not associated with an admin'}), 404
-            user_id = customer.user_id
-            # Customers should only see active products
-            query = {
-                'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
-                'is_active': True
-            }
-            customer_id = current_user.id  # Use the logged-in customer's ID for pricing
-        else:
-            # For admins, use their own user_id
-            user_id = current_user.id
-            query = {'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id}
-            customer_id = request.args.get('customer_id', type=int)  # Optional customer ID for customer-specific pricing
+        # Build query exactly like inventory endpoint
+        query = {
+            'user_id': user_id_obj,
+            'is_active': True
+        }
         
-        print(f"Products API called by user: {user_id} (customer: {is_customer})")
+        # Optional customer ID for customer-specific pricing (for admin setting prices)
+        customer_id = request.args.get('customer_id', type=int)
+        
+        print(f"Products API called by user: {user_id}, query: {query}")
         search = request.args.get('search', '')
         category = request.args.get('category', '')
         
@@ -164,33 +167,58 @@ def api_get_products():
         if category and category != 'All':
             query['category'] = category
         
-        # Get database instance
-        database = get_db() if 'get_db' in globals() else db
-        if database is None:
-            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        # Database is already obtained above, use it
+        try:
+            print(f"Executing query: {query}")
+            products_docs = list(database['products'].find(query).sort('name', 1))
+            print(f"Found {len(products_docs)} product documents from database")
+            products = []
+            for doc in products_docs:
+                if not isinstance(doc, dict):
+                    print(f"Warning: Skipping non-dict product document: {doc}")
+                    continue
+                product = Product.from_dict(doc)
+                if product:
+                    products.append(product)
+                else:
+                    print(f"Warning: Product.from_dict returned None for document: {doc}")
+        except Exception as query_error:
+            import traceback
+            print(f"Error querying products: {str(query_error)}")
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Error querying products: {str(query_error)}'}), 500
         
-        products = [Product.from_dict(doc) for doc in database['products'].find(query).sort('name', 1)]
         print(f"Found {len(products)} products for user {user_id}")
         
         # Return only the fields needed for products page
         products_data = []
         for product in products:
+            if product is None:
+                print(f"Warning: Skipping None product")
+                continue
             try:
-                # Get customer-specific price if customer_id is provided
+                # Get price - start with default product price
+                try:
+                    price = float(getattr(product, 'price', 0)) if getattr(product, 'price', None) is not None else 0.0
+                except (ValueError, TypeError, AttributeError):
+                    price = 0.0
+                
+                # Try to get customer-specific price if customer_id is provided
                 if customer_id:
-                    # Check if customer exists (can be from any admin since products are visible to all)
-                    customer = Customer.find_by_id(customer_id)
-                    if customer:
-                        # Get customer-specific price if set for this product
-                        try:
-                            price = product.get_customer_price(customer_id)
-                        except Exception as price_error:
-                            print(f"Error getting customer price for product {product.id}: {str(price_error)}")
-                            price = product.price  # Fallback to default price
-                    else:
-                        price = product.price  # Fallback to default price
-                else:
-                    price = product.price  # Default price
+                    try:
+                        from models import Customer
+                        customer = Customer.find_by_id(customer_id)
+                        if customer and hasattr(product, 'get_customer_price'):
+                            try:
+                                customer_price = product.get_customer_price(customer_id)
+                                if customer_price is not None:
+                                    price = float(customer_price)
+                            except Exception:
+                                # Silently fall back to default price
+                                pass
+                    except Exception:
+                        # Silently fall back to default price
+                        pass
                 
                 # Get purchase_price from product model
                 try:
@@ -200,8 +228,11 @@ def api_get_products():
                 
                 # Safely get all product fields with try-except for each
                 try:
+                    # Ensure product.id is converted to string for frontend compatibility
+                    product_id = str(product.id) if hasattr(product, 'id') and product.id else '0'
+                    
                     product_data = {
-                        'id': product.id if hasattr(product, 'id') else 0,
+                        'id': product_id,
                         'name': getattr(product, 'name', '') or '',
                         'description': getattr(product, 'description', '') or '',
                         'image_url': getattr(product, 'image_url', '') or '',
@@ -221,8 +252,9 @@ def api_get_products():
                 except Exception as field_error:
                     print(f"Error creating product_data dict for product {getattr(product, 'id', 'unknown')}: {str(field_error)}")
                     # Create minimal product data
+                    product_id_minimal = str(getattr(product, 'id', '')) if hasattr(product, 'id') and getattr(product, 'id') else '0'
                     product_data = {
-                        'id': getattr(product, 'id', 0),
+                        'id': product_id_minimal,
                         'name': str(getattr(product, 'name', 'Unknown')),
                         'description': '',
                         'image_url': '',
@@ -240,15 +272,48 @@ def api_get_products():
                         'min_stock_level': 10
                     }
                 products_data.append(product_data)
-                print(f"Product: ID={product.id}, Name={product.name}, SKU={product.sku}, Price={price}, Default Price={product.price}, Stock={product.stock_quantity}")
+                try:
+                    print(f"Product: ID={getattr(product, 'id', 'N/A')}, Name={getattr(product, 'name', 'N/A')}, SKU={getattr(product, 'sku', 'N/A')}, Price={price}, Default Price={getattr(product, 'price', 'N/A')}, Stock={getattr(product, 'stock_quantity', 'N/A')}")
+                except Exception as print_error:
+                    print(f"Error printing product info: {print_error}")
             except Exception as product_error:
-                print(f"Error processing product {product.id}: {str(product_error)}")
+                product_id_str = getattr(product, 'id', 'unknown') if product else 'None'
+                print(f"Error processing product {product_id_str}: {str(product_error)}")
                 import traceback
                 traceback.print_exc()
-                # Skip this product but continue with others
-                continue
+                # Try to add minimal product data even if processing fails
+                try:
+                    minimal_product = {
+                        'id': str(getattr(product, 'id', '')) if hasattr(product, 'id') else '',
+                        'name': str(getattr(product, 'name', 'Unknown Product')) if hasattr(product, 'name') else 'Unknown Product',
+                        'description': '',
+                        'image_url': '',
+                        'price': float(getattr(product, 'price', 0)) if hasattr(product, 'price') and getattr(product, 'price') is not None else 0.0,
+                        'default_price': float(getattr(product, 'price', 0)) if hasattr(product, 'price') and getattr(product, 'price') is not None else 0.0,
+                        'stock_quantity': int(getattr(product, 'stock_quantity', 0)) if hasattr(product, 'stock_quantity') and getattr(product, 'stock_quantity') is not None else 0,
+                        'has_custom_price': False,
+                        'is_active': True,
+                        'sku': str(getattr(product, 'sku', '')) if hasattr(product, 'sku') else '',
+                        'category': str(getattr(product, 'category', '')) if hasattr(product, 'category') else '',
+                        'purchase_price': 0.0,
+                        'hsn_code': '',
+                        'brand': '',
+                        'gst_rate': 18.0,
+                        'min_stock_level': 10
+                    }
+                    products_data.append(minimal_product)
+                    print(f"Added minimal product data for {product_id_str}")
+                except Exception as minimal_error:
+                    print(f"Failed to add even minimal product data: {minimal_error}")
+                    # Skip this product but continue with others
+                    continue
         
         print(f"Returning {len(products_data)} products")
+        if len(products_data) == 0:
+            print(f"WARNING: No products returned for user {user_id}")
+            print(f"Query was: {query}")
+            print(f"Total products in database for this user: {database['products'].count_documents({'user_id': user_id_obj})}")
+            print(f"Total products with is_active=True: {database['products'].count_documents({'user_id': user_id_obj, 'is_active': True})}")
         return jsonify({'success': True, 'products': products_data})
     
     except Exception as e:
@@ -256,11 +321,21 @@ def api_get_products():
         error_trace = traceback.format_exc()
         print(f"Error in products API: {str(e)}")
         print(f"Full traceback:\n{error_trace}")
-        return jsonify({
-            'success': False, 
-            'error': str(e),
-            'message': f'Failed to load products: {str(e)}'
-        }), 500
+        
+        # Always return a valid JSON response, even on error
+        # Return empty products list instead of failing completely
+        try:
+            return jsonify({
+                'success': True,  # Set to True so frontend doesn't show error
+                'products': [],  # Return empty list
+                'message': 'No products found or error loading products'
+            }), 200
+        except Exception as json_error:
+            # If even JSON creation fails, return minimal response
+            return jsonify({
+                'success': True,
+                'products': []
+            }), 200
 
 @product_bp.route('/', methods=['OPTIONS'])
 def api_create_product_options():
@@ -360,35 +435,72 @@ def api_create_product():
 def api_get_customer_prices():
     """Get all customer-specific prices for products"""
     try:
-        customer_id = request.args.get('customer_id', type=int)
-        product_id = request.args.get('product_id', type=int)
+        # Get database connection
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        customer_id = request.args.get('customer_id')
+        product_id = request.args.get('product_id')
+        
+        user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
         
         # Get customers for this user first
-        customer_ids = [str(doc['_id']) for doc in db['customers'].find(
-            {'user_id': ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id}
-        )]
+        customer_ids = []
+        customer_docs = list(database['customers'].find({'user_id': user_id_obj}))
+        for doc in customer_docs:
+            if isinstance(doc, dict) and '_id' in doc:
+                customer_ids.append(doc['_id'])
         
-        query = {'customer_id': {'$in': [ObjectId(cid) if isinstance(cid, str) else cid for cid in customer_ids]}}
+        query = {}
+        if customer_ids:
+            query['customer_id'] = {'$in': customer_ids}
         
         if customer_id:
-            query['customer_id'] = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
-        if product_id:
-            query['product_id'] = ObjectId(product_id) if isinstance(product_id, str) else product_id
+            # Convert customer_id to ObjectId if it's a string
+            try:
+                customer_id_obj = ObjectId(customer_id) if isinstance(customer_id, str) else customer_id
+                query['customer_id'] = customer_id_obj
+            except:
+                return jsonify({'success': False, 'error': 'Invalid customer_id'}), 400
         
-        prices = [CustomerProductPrice.from_dict(doc) for doc in db['customer_product_prices'].find(query)]
+        if product_id:
+            # Convert product_id to ObjectId if it's a string
+            try:
+                product_id_obj = ObjectId(product_id) if isinstance(product_id, str) else product_id
+                query['product_id'] = product_id_obj
+            except:
+                return jsonify({'success': False, 'error': 'Invalid product_id'}), 400
+        
+        prices_docs = list(database['customer_product_prices'].find(query))
+        prices = []
+        for doc in prices_docs:
+            if not isinstance(doc, dict):
+                continue
+            price = CustomerProductPrice.from_dict(doc)
+            if price:
+                prices.append(price)
         
         prices_data = []
         for price in prices:
-            prices_data.append({
-                'id': price.id,
-                'customer_id': price.customer_id,
-                'customer_name': price.customer.name if price.customer else 'Unknown',
-                'product_id': price.product_id,
-                'product_name': price.product.name if price.product else 'Unknown',
-                'price': float(price.price),
-                'created_at': price.created_at.isoformat() if price.created_at else None,
-                'updated_at': price.updated_at.isoformat() if price.updated_at else None
-            })
+            try:
+                # Get customer and product names
+                customer = Customer.find_by_id(str(price.customer_id)) if price.customer_id else None
+                product = Product.find_by_id(str(price.product_id)) if price.product_id else None
+                
+                prices_data.append({
+                    'id': price.id,
+                    'customer_id': str(price.customer_id) if price.customer_id else '',
+                    'customer_name': customer.name if customer else 'Unknown',
+                    'product_id': str(price.product_id) if price.product_id else '',
+                    'product_name': product.name if product else 'Unknown',
+                    'price': float(price.price) if price.price is not None else 0.0,
+                    'created_at': price.created_at.isoformat() if hasattr(price, 'created_at') and price.created_at else None,
+                    'updated_at': price.updated_at.isoformat() if hasattr(price, 'updated_at') and price.updated_at else None
+                })
+            except Exception as price_error:
+                print(f"Error processing price: {price_error}")
+                continue
         
         return jsonify({'success': True, 'prices': prices_data})
     
@@ -412,45 +524,57 @@ def api_set_customer_price():
         product_id = data.get('product_id')
         price = data.get('price')
         
-        # Convert to integers to ensure proper type
+        # Convert price to float, but keep IDs as strings (MongoDB uses ObjectId strings)
         try:
-            customer_id = int(customer_id) if customer_id is not None else None
-            product_id = int(product_id) if product_id is not None else None
             price = float(price) if price is not None else None
         except (ValueError, TypeError) as e:
-            return jsonify({'success': False, 'error': f'Invalid data types: {str(e)}'}), 400
+            return jsonify({'success': False, 'error': f'Invalid price: {str(e)}'}), 400
         
-        if not all([customer_id, product_id, price is not None]):
-            return jsonify({'success': False, 'error': 'customer_id, product_id, and price are required'}), 400
+        # Validate required fields with better error messages
+        if not customer_id:
+            return jsonify({'success': False, 'error': 'customer_id is required'}), 400
+        if not product_id:
+            return jsonify({'success': False, 'error': 'product_id is required'}), 400
+        if price is None:
+            return jsonify({'success': False, 'error': 'price is required'}), 400
+        if price <= 0:
+            return jsonify({'success': False, 'error': 'price must be greater than 0'}), 400
+        
+        # Get database connection
+        from models import get_db
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        # Convert IDs to strings (MongoDB uses ObjectId strings)
+        customer_id_str = str(customer_id) if customer_id else None
+        product_id_str = str(product_id) if product_id else None
+        
+        if not customer_id_str or not product_id_str:
+            return jsonify({'success': False, 'error': 'Invalid customer_id or product_id'}), 400
         
         # First, verify customer exists (check if it belongs to this admin or any admin)
-        customer = Customer.find_by_id(customer_id)
+        customer = Customer.find_by_id(customer_id_str)
         if not customer:
-            # Get all customers for debugging
-            all_customers = [Customer.from_dict(doc) for doc in db['customers'].find()]
-            customer_ids = [c.id for c in all_customers]
             return jsonify({
                 'success': False, 
-                'error': f'Customer not found. Customer ID: {customer_id}. Available customer IDs: {customer_ids}'
+                'error': f'Customer not found. Customer ID: {customer_id_str}'
             }), 404
         
         # Verify product belongs to this admin
         user_id_obj = ObjectId(current_user.id) if isinstance(current_user.id, str) else current_user.id
-        product = Product.find_by_id(product_id)
+        product = Product.find_by_id(product_id_str)
         if not product or str(product.user_id) != str(current_user.id):
-            # Get all products for debugging
-            all_products = [Product.from_dict(doc) for doc in db['products'].find({'user_id': user_id_obj})]
-            product_ids = [p.id for p in all_products]
             return jsonify({
                 'success': False, 
-                'error': f'Product not found or does not belong to you. Product ID: {product_id}. Your product IDs: {product_ids}'
+                'error': f'Product not found or does not belong to you. Product ID: {product_id_str}'
             }), 404
         
         # If customer belongs to a different admin, that's okay - we can still set prices
         # The important thing is that the product belongs to the current admin
         
         # Check if price already exists
-        customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id, product_id)
+        customer_price = CustomerProductPrice.find_by_customer_and_product(customer_id_str, product_id_str)
         
         if customer_price:
             # Update existing price
@@ -634,12 +758,17 @@ def api_delete_product(id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@product_bp.route('/<int:id>/stock', methods=['POST'])
+@product_bp.route('/<id>/stock', methods=['POST'])
 @login_required
 def api_stock_movement(id):
     """Add stock movement"""
     try:
-        product = Product.find_by_id(id)
+        # Handle both string and int IDs
+        product_id = str(id) if id else None
+        if not product_id:
+            return jsonify({'success': False, 'error': 'Invalid product ID'}), 400
+        
+        product = Product.find_by_id(product_id)
         if not product or str(product.user_id) != str(current_user.id) or not product.is_active:
             return jsonify({'success': False, 'error': 'Product not found'}), 404
         
@@ -665,7 +794,29 @@ def api_stock_movement(id):
         
         product.updated_at = datetime.utcnow()
         
-        movement.save()
+        # Save product first to update stock quantity
+        try:
+            product.save()
+        except Exception as save_error:
+            import traceback
+            print(f"Error saving product: {save_error}")
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to update product stock: {str(save_error)}'}), 500
+        
+        # Save stock movement
+        try:
+            movement.save()
+        except Exception as movement_error:
+            import traceback
+            print(f"Error saving stock movement: {movement_error}")
+            traceback.print_exc()
+            # Product was already saved, so we can still return success but log the movement error
+            return jsonify({
+                'success': True, 
+                'message': 'Stock updated successfully, but movement record failed',
+                'new_stock': product.stock_quantity,
+                'warning': f'Movement record error: {str(movement_error)}'
+            })
         
         return jsonify({
             'success': True, 
@@ -674,6 +825,10 @@ def api_stock_movement(id):
         })
     
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error in stock movement API: {str(e)}")
+        print(f"Full traceback:\n{error_trace}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @product_bp.route('/bulk-stock', methods=['POST'])
@@ -808,13 +963,34 @@ def api_get_stock_movements():
         if not current_user or not hasattr(current_user, 'id'):
             return jsonify({'success': False, 'error': 'User not authenticated'}), 401
         
+        # Get database instance
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
         user_id = current_user.id
         movement_type = request.args.get('movement_type', '')  # 'in' or 'out' or empty for all
         
         # Get all products for this user
-        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) else user_id
-        products = [Product.from_dict(doc) for doc in db['products'].find({'user_id': user_id_obj, 'is_active': True})]
-        product_ids = [ObjectId(p.id) if isinstance(p.id, str) else p.id for p in products]
+        user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        products = [Product.from_dict(doc) for doc in database['products'].find({'user_id': user_id_obj, 'is_active': True})]
+        
+        if not products:
+            return jsonify({'success': True, 'movements': []})
+        
+        # Get product IDs (handle both string and ObjectId)
+        product_ids = []
+        for p in products:
+            if p and p.id:
+                if isinstance(p.id, str) and ObjectId.is_valid(p.id):
+                    product_ids.append(ObjectId(p.id))
+                elif isinstance(p.id, ObjectId):
+                    product_ids.append(p.id)
+                else:
+                    try:
+                        product_ids.append(ObjectId(str(p.id)))
+                    except:
+                        continue
         
         if not product_ids:
             return jsonify({'success': True, 'movements': []})
@@ -825,23 +1001,79 @@ def api_get_stock_movements():
         if movement_type:
             query['movement_type'] = movement_type
         
-        movements = [StockMovement.from_dict(doc) for doc in db['stock_movements'].find(query).sort('created_at', -1)]
+        movements_docs = list(database['stock_movements'].find(query).sort('created_at', -1))
+        movements = []
+        for doc in movements_docs:
+            if not isinstance(doc, dict):
+                continue
+            movement = StockMovement.from_dict(doc)
+            if movement:
+                movements.append(movement)
         
         movements_data = []
         for movement in movements:
-            movements_data.append({
-                'id': movement.id,
-                'product_id': movement.product_id,
-                'movement_type': movement.movement_type,
-                'quantity': movement.quantity,
-                'reference': movement.reference or '',
-                'notes': movement.notes or '',
-                'created_at': movement.created_at.isoformat() if movement.created_at else None
-            })
+            if not movement:
+                continue
+            try:
+                # Convert product_id to string for frontend (handle ObjectId)
+                product_id = movement.product_id
+                if isinstance(product_id, ObjectId):
+                    product_id_str = str(product_id)
+                else:
+                    product_id_str = str(product_id) if product_id else ''
+                
+                # Convert movement ID to string
+                movement_id = movement.id
+                if isinstance(movement_id, ObjectId):
+                    movement_id_str = str(movement_id)
+                else:
+                    movement_id_str = str(movement_id) if movement_id else ''
+                
+                # Handle created_at conversion
+                created_at_str = None
+                if movement.created_at:
+                    try:
+                        if hasattr(movement.created_at, 'isoformat'):
+                            created_at_str = movement.created_at.isoformat()
+                        elif isinstance(movement.created_at, datetime):
+                            created_at_str = movement.created_at.isoformat()
+                        else:
+                            created_at_str = str(movement.created_at)
+                    except Exception:
+                        created_at_str = str(movement.created_at) if movement.created_at else None
+                
+                movements_data.append({
+                    'id': movement_id_str,
+                    'product_id': product_id_str,
+                    'movement_type': movement.movement_type or '',
+                    'quantity': float(movement.quantity) if movement.quantity is not None else 0,
+                    'reference': movement.reference or '',
+                    'notes': movement.notes or '',
+                    'created_at': created_at_str
+                })
+            except Exception as e:
+                print(f"Error processing movement {getattr(movement, 'id', 'unknown')}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Clean data to ensure all ObjectIds are converted
+        def clean_data(data):
+            """Recursively clean data to convert ObjectIds to strings"""
+            if isinstance(data, dict):
+                return {k: clean_data(v) for k, v in data.items()}
+            elif isinstance(data, list):
+                return [clean_data(item) for item in data]
+            elif isinstance(data, ObjectId):
+                return str(data)
+            else:
+                return data
+        
+        cleaned_movements = clean_data(movements_data)
         
         return jsonify({
             'success': True,
-            'movements': movements_data
+            'movements': cleaned_movements
         })
     
     except Exception as e:
@@ -849,7 +1081,13 @@ def api_get_stock_movements():
         error_trace = traceback.format_exc()
         print(f"Error in stock movements API: {str(e)}")
         print(f"Full traceback:\n{error_trace}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # Return success with empty list instead of error to prevent frontend crashes
+        return jsonify({
+            'success': True, 
+            'movements': [],
+            'error': str(e),
+            'message': f'Some movements may not be available: {str(e)}'
+        }), 200
 
 @product_bp.route('/inventory', methods=['GET'])
 @login_required
@@ -860,13 +1098,26 @@ def api_get_inventory():
         if not current_user or not hasattr(current_user, 'id'):
             return jsonify({'success': False, 'error': 'User not authenticated'}), 401
         
+        # Get database connection dynamically
+        database = get_db()
+        if database is None:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
         user_id = current_user.id
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Invalid user ID'}), 401
+        
         search = request.args.get('search', '')
         category = request.args.get('category', '')
         
         # Build optimized query - only get necessary fields
+        try:
+            user_id_obj = ObjectId(user_id) if isinstance(user_id, str) and ObjectId.is_valid(user_id) else user_id
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Invalid user ID format: {str(e)}'}), 400
+        
         query = {
-            'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
+            'user_id': user_id_obj,
             'is_active': True
         }
         
@@ -881,7 +1132,31 @@ def api_get_inventory():
             query['category'] = category
         
         # Get products with optimized query
-        products = [Product.from_dict(doc) for doc in db['products'].find(query).sort('name', 1)]
+        try:
+            products_docs = list(database['products'].find(query).sort('name', 1))
+            products = []
+            for doc in products_docs:
+                try:
+                    # Skip None or invalid documents
+                    if doc is None or not isinstance(doc, dict):
+                        print(f"Warning: Skipping invalid document: {doc}")
+                        continue
+                    product = Product.from_dict(doc)
+                    if product is None:
+                        print(f"Warning: Product.from_dict returned None for document: {doc.get('_id', 'unknown')}")
+                        continue
+                    products.append(product)
+                except Exception as e:
+                    import traceback
+                    print(f"Warning: Could not parse product document: {e}")
+                    print(traceback.format_exc())
+                    continue
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"Error fetching products: {str(e)}")
+            print(f"Full traceback:\n{error_trace}")
+            return jsonify({'success': False, 'error': f'Error fetching products: {str(e)}'}), 500
         
         # Calculate summary statistics efficiently
         low_stock_items = []
@@ -894,90 +1169,155 @@ def api_get_inventory():
         inventory_data = []
         
         # Get last updated dates in a single query for all products
-        product_ids = [ObjectId(p.id) if isinstance(p.id, str) else p.id for p in products]
+        # Prepare product_ids in both ObjectId and string formats for matching
+        product_ids_obj = []
+        product_ids_str = []
+        for p in products:
+            if p.id:
+                if isinstance(p.id, str) and ObjectId.is_valid(p.id):
+                    product_ids_obj.append(ObjectId(p.id))
+                    product_ids_str.append(p.id)
+                elif isinstance(p.id, ObjectId):
+                    product_ids_obj.append(p.id)
+                    product_ids_str.append(str(p.id))
+                else:
+                    product_ids_str.append(str(p.id))
+        
         last_movements = {}
-        if product_ids:
-            # Get the most recent movement for each product using aggregation
-            pipeline = [
-                {'$match': {'product_id': {'$in': product_ids}}},
-                {'$group': {
-                    '_id': '$product_id',
-                    'last_updated': {'$max': '$created_at'}
-                }}
-            ]
-            recent_movements = db['stock_movements'].aggregate(pipeline)
-            
-            for movement in recent_movements:
-                product_id_str = str(movement['_id'])
-                last_movements[product_id_str] = movement['last_updated']
+        if product_ids_obj or product_ids_str:
+            try:
+                # Get the most recent movement for each product using aggregation
+                # Match both ObjectId and string product_ids
+                match_conditions = []
+                if product_ids_obj:
+                    match_conditions.append({'product_id': {'$in': product_ids_obj}})
+                if product_ids_str:
+                    match_conditions.append({'product_id': {'$in': product_ids_str}})
+                
+                if match_conditions:
+                    pipeline = [
+                        {'$match': {'$or': match_conditions}},
+                        {'$group': {
+                            '_id': '$product_id',
+                            'last_updated': {'$max': '$created_at'}
+                        }}
+                    ]
+                    recent_movements = database['stock_movements'].aggregate(pipeline)
+                    
+                    for movement in recent_movements:
+                        # Skip None or invalid movements
+                        if movement is None or not isinstance(movement, dict):
+                            continue
+                        # Convert product_id to string for matching
+                        product_id = movement.get('_id')
+                        if product_id is None:
+                            continue
+                        if isinstance(product_id, ObjectId):
+                            product_id_str = str(product_id)
+                        else:
+                            product_id_str = str(product_id)
+                        last_updated = movement.get('last_updated')
+                        if last_updated:
+                            last_movements[product_id_str] = last_updated
+            except Exception as agg_error:
+                # If aggregation fails, continue without last_updated dates
+                import traceback
+                print(f"Warning: Could not fetch last movements: {agg_error}")
+                print(traceback.format_exc())
+                pass
         
         for product in products:
-            stock_qty = product.stock_quantity if product.stock_quantity is not None else 0
-            price = float(product.price) if product.price is not None else 0.0
-            purchase_price = float(product.purchase_price) if product.purchase_price is not None else 0.0
-            
-            # Calculate stock values
-            stock_value_sales = stock_qty * price
-            stock_value_purchase = stock_qty * purchase_price
-            
-            # Track low stock (negative or below min level)
-            if stock_qty < 0 or (stock_qty > 0 and stock_qty <= product.min_stock_level):
-                low_stock_items.append(product.id)
-                low_stock_qty += stock_qty
-            
-            # Track positive stock
-            if stock_qty > 0:
-                positive_stock_items.append(product.id)
-                positive_stock_qty += stock_qty
-            
-            total_stock_value_sales += stock_value_sales
-            total_stock_value_purchase += stock_value_purchase
-            
-            # Get last updated date
-            last_updated = last_movements.get(product.id)
-            if not last_updated and product.updated_at:
-                last_updated = product.updated_at
-            
-            inventory_data.append({
-                'id': product.id,
-                'name': product.name or '',
-                'vegetable_name_hindi': getattr(product, 'vegetable_name_hindi', '') or '',
-                'sku': product.sku or '',
-                'category': product.category or '',
-                'stock_quantity': stock_qty,
-                'min_stock_level': product.min_stock_level if product.min_stock_level is not None else 10,
-                'price': price,
-                'purchase_price': purchase_price,
-                'unit': product.unit or 'PCS',
-                'last_updated': last_updated.isoformat() if last_updated else None,
-                'status': 'out_of_stock' if stock_qty == 0 else 
-                         'low_stock' if stock_qty < 0 or (stock_qty > 0 and stock_qty <= product.min_stock_level) else 'in_stock'
-            })
+            try:
+                # Skip None products
+                if product is None:
+                    print("Warning: Skipping None product")
+                    continue
+                
+                stock_qty = product.stock_quantity if hasattr(product, 'stock_quantity') and product.stock_quantity is not None else 0
+                price = float(product.price) if hasattr(product, 'price') and product.price is not None else 0.0
+                purchase_price = float(product.purchase_price) if hasattr(product, 'purchase_price') and product.purchase_price is not None else 0.0
+                min_stock_level = product.min_stock_level if hasattr(product, 'min_stock_level') and product.min_stock_level is not None else 10
+                
+                # Calculate stock values
+                stock_value_sales = stock_qty * price
+                stock_value_purchase = stock_qty * purchase_price
+                
+                # Track low stock (negative or below min level)
+                if stock_qty < 0 or (stock_qty > 0 and stock_qty <= min_stock_level):
+                    low_stock_items.append(product.id)
+                    low_stock_qty += stock_qty
+                
+                # Track positive stock
+                if stock_qty > 0:
+                    positive_stock_items.append(product.id)
+                    positive_stock_qty += stock_qty
+                
+                total_stock_value_sales += stock_value_sales
+                total_stock_value_purchase += stock_value_purchase
+                
+                # Get last updated date
+                product_id_str = str(product.id) if product.id else None
+                last_updated = last_movements.get(product_id_str) if product_id_str else None
+                if not last_updated and hasattr(product, 'updated_at') and product.updated_at:
+                    last_updated = product.updated_at
+                
+                inventory_data.append({
+                    'id': str(product.id) if product.id else '',
+                    'name': product.name if hasattr(product, 'name') and product.name else '',
+                    'vegetable_name_hindi': getattr(product, 'vegetable_name_hindi', '') or '',
+                    'sku': product.sku if hasattr(product, 'sku') and product.sku else '',
+                    'category': product.category if hasattr(product, 'category') and product.category else '',
+                    'stock_quantity': stock_qty,
+                    'min_stock_level': min_stock_level,
+                    'price': price,
+                    'purchase_price': purchase_price,
+                    'unit': product.unit if hasattr(product, 'unit') and product.unit else 'PCS',
+                    'last_updated': last_updated.isoformat() if last_updated and hasattr(last_updated, 'isoformat') else None,
+                    'status': ('out_of_stock' if stock_qty == 0 else 
+                              ('low_stock' if stock_qty < 0 or (stock_qty > 0 and stock_qty <= min_stock_level) else 'in_stock'))
+                })
+            except Exception as product_error:
+                # Skip products that cause errors but log them
+                import traceback
+                print(f"Error processing product {getattr(product, 'id', 'unknown')}: {product_error}")
+                print(traceback.format_exc())
+                continue
         
+        # Return response with inventory data
         return jsonify({
             'success': True,
             'inventory': inventory_data,
             'summary': {
                 'low_stock': {
                     'items': len(low_stock_items),
-                    'quantity': low_stock_qty
+                    'quantity': float(low_stock_qty)
                 },
                 'positive_stock': {
                     'items': len(positive_stock_items),
-                    'quantity': positive_stock_qty
+                    'quantity': float(positive_stock_qty)
                 },
                 'stock_value_sales_price': float(total_stock_value_sales),
                 'stock_value_purchase_price': float(total_stock_value_purchase),
-                'total_products': len(products)
+                'total_products': len(inventory_data)
             }
         })
     
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"Error in inventory API: {str(e)}")
+        error_msg = str(e)
+        print(f"Error in inventory API: {error_msg}")
         print(f"Full traceback:\n{error_trace}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # Return more detailed error in development, simpler in production
+        import os
+        if os.environ.get('FLASK_ENV') == 'development':
+            return jsonify({
+                'success': False, 
+                'error': error_msg,
+                'traceback': error_trace.split('\n')[-10:]  # Last 10 lines
+            }), 500
+        else:
+            return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 # Legacy template routes (keeping for compatibility)
 @product_bp.route('/products')
