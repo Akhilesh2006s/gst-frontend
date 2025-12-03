@@ -200,6 +200,22 @@ class User(UserMixin):
         return None
     
     @classmethod
+    def find_by_gst_number(cls, gst_number):
+        """Find user by GST number"""
+        try:
+            db = get_db()
+            if db is None:
+                return None
+            if not gst_number:
+                return None
+            doc = db[cls.collection_name].find_one({'gst_number': gst_number})
+            if doc:
+                return cls.from_dict(doc)
+        except Exception as e:
+            print(f"Error finding user by GST number: {e}")
+        return None
+    
+    @classmethod
     def find_by_username(cls, username):
         """Find user by username"""
         try:
