@@ -10,11 +10,11 @@ class Config:
     CORS_ORIGINS = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')]
     
     # Security settings
-    SESSION_COOKIE_SECURE = os.environ.get('FLASK_ENV') == 'production'
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
     SESSION_COOKIE_HTTPONLY = True
-    # Use 'Lax' for development (localhost), 'None' for production cross-origin (requires Secure=True and HTTPS)
-    SESSION_COOKIE_SAMESITE = 'Lax'  # Changed to 'Lax' for better localhost compatibility
-    SESSION_COOKIE_DOMAIN = None  # Don't set domain for localhost
+    # Use None to allow cross-origin cookies (required for hosted frontend)
+    SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'None')
+    SESSION_COOKIE_DOMAIN = os.environ.get('SESSION_COOKIE_DOMAIN')
     
     # Port configuration for Railway
     PORT = int(os.environ.get('PORT', 5000))
