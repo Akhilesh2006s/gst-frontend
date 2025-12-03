@@ -1,5 +1,5 @@
 // API Configuration
-// Use environment variable in production, localhost for development
+// Use environment variable when provided, otherwise fall back to hosted backend
 const getApiBaseUrl = (): string => {
   // Check for environment variable first
   if (import.meta.env.VITE_API_URL) {
@@ -8,8 +8,8 @@ const getApiBaseUrl = (): string => {
     return url.replace(/\/$/, '');
   }
   
-  // Default to localhost for development
-  const baseUrl = 'http://localhost:5000/api';
+  // Default to hosted backend when no env var is configured
+  const baseUrl = 'https://web-production-f50e6.up.railway.app/api';
   // Ensure no trailing slash
   return baseUrl.replace(/\/$/, '');
 };

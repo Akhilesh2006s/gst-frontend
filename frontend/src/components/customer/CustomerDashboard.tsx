@@ -372,7 +372,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
     } catch (error: any) {
       console.error('Failed to submit order:', error);
       if (error.message && error.message.includes('Failed to fetch')) {
-        alert('Failed to submit order: Cannot connect to server. Please ensure the backend server is running on http://localhost:5000');
+        alert('Failed to submit order: Cannot connect to server. Please ensure the backend server is reachable at https://web-production-f50e6.up.railway.app');
       } else {
         alert(`Failed to submit order: ${error.message || 'Network error. Please check your connection and try again.'}`);
       }
@@ -527,7 +527,7 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ onLogout }) => {
                     <span className="text-xl font-bold text-gray-900">{formatCurrency(product.price)}</span>
                     {product.has_custom_price && product.default_price !== product.price && (
                       <span className="text-xs text-gray-500 line-through">
-                        {formatCurrency(product.default_price)}
+                        {formatCurrency(product.default_price ?? product.price)}
                       </span>
                     )}
                   </div>
